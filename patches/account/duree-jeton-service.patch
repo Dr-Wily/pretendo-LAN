@@ -1,0 +1,13 @@
+--- a/src/services/nnas/routes/provider.ts
++++ b/src/services/nnas/routes/provider.ts
+@@ -95,7 +95,9 @@
+ 		pid: pnid.pid,
+ 		access_level: pnid.access_level,
+ 		title_id: BigInt(parseInt(titleID, 16)),
+-		expire_time: BigInt(Date.now() + (3600 * 1000))
++		// * Pretendo LAN : une heure seulement, alors que la console garde ce jeton sans le renouveler. Ensuite,
++		// * Miiverse le refuse (BAD_TOKEN) et un jeu affiche 115-5016, par exemple à la création d'un tournoi.
++		expire_time: BigInt(Date.now() + (30 * 24 * 3600 * 1000))
+ 	};
+ 
+ 	const serviceTokenBuffer = await generateToken(server.aes_key, tokenOptions);

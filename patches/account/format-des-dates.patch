@@ -1,0 +1,68 @@
+Pretendo LAN : dates des comptes (création, validation de l'e-mail, mise à jour).
+Avec moment, MM est le mois et SS les centièmes de seconde : 'HH:MM:SS' donnait par exemple
+18:11:92 pour 18:50:28 un 3 novembre. Format corrigé : 'HH:mm:ss'.
+
+--- a/src/services/grpc/api/register.ts
++++ b/src/services/grpc/api/register.ts
+@@ -129,7 +129,7 @@
+ 	const mii = new Mii(DEFAULT_MII_DATA);
+ 	mii.miiName = miiName;
+ 
+-	const creationDate = moment().format('YYYY-MM-DDTHH:MM:SS');
++	const creationDate = moment().format('YYYY-MM-DDTHH:mm:ss');
+ 	let pnid: HydratedPNIDDocument;
+ 	let nexAccount: HydratedNEXAccountDocument;
+ 
+--- a/src/services/api/routes/v1/email.ts
++++ b/src/services/api/routes/v1/email.ts
+@@ -32,7 +32,7 @@
+ 		return;
+ 	}
+ 
+-	const validatedDate = moment().format('YYYY-MM-DDTHH:MM:SS');
++	const validatedDate = moment().format('YYYY-MM-DDTHH:mm:ss');
+ 
+ 	pnid.email.reachable = true;
+ 	pnid.email.validated = true;
+--- a/src/services/api/routes/v1/register.ts
++++ b/src/services/api/routes/v1/register.ts
+@@ -265,7 +265,7 @@
+ 	const mii = new Mii(DEFAULT_MII_DATA);
+ 	mii.miiName = miiName;
+ 
+-	const creationDate = moment().format('YYYY-MM-DDTHH:MM:SS');
++	const creationDate = moment().format('YYYY-MM-DDTHH:mm:ss');
+ 	let pnid: HydratedPNIDDocument;
+ 	let nexAccount: HydratedNEXAccountDocument;
+ 
+--- a/src/services/nnas/routes/support.ts
++++ b/src/services/nnas/routes/support.ts
+@@ -83,7 +83,7 @@
+ 		return;
+ 	}
+ 
+-	const validatedDate = moment().format('YYYY-MM-DDTHH:MM:SS');
++	const validatedDate = moment().format('YYYY-MM-DDTHH:mm:ss');
+ 
+ 	pnid.email.reachable = true;
+ 	pnid.email.validated = true;
+--- a/src/services/nnas/routes/people.ts
++++ b/src/services/nnas/routes/people.ts
+@@ -93,7 +93,7 @@
+ 		return;
+ 	}
+ 
+-	const creationDate = moment().format('YYYY-MM-DDTHH:MM:SS');
++	const creationDate = moment().format('YYYY-MM-DDTHH:mm:ss');
+ 	let pnid: HydratedPNIDDocument;
+ 	let nexAccount: HydratedNEXAccountDocument;
+ 
+@@ -382,7 +382,7 @@
+ 				device: {
+ 					device_id: deviceID,
+ 					language: acceptLanguage,
+-					updated: moment().format('YYYY-MM-DDTHH:MM:SS'),
++					updated: moment().format('YYYY-MM-DDTHH:mm:ss'),
+ 					pid: pnid.pid,
+ 					platform_id: platformID,
+ 					region: region,

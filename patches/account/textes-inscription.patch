@@ -1,0 +1,199 @@
+--- a/src/services/nnas/routes/content.ts
++++ b/src/services/nnas/routes/content.ts
+@@ -1,9 +1,58 @@
++import fs from 'node:fs';
+ import express from 'express';
+ import xmlbuilder from 'xmlbuilder';
+ import timezones from '@/services/nnas/timezones.json';
+ 
+ const router = express.Router();
+ 
++// * Pretendo LAN : textes d'accord modifiables depuis l'interface d'administration. Le fichier
++// * (PN_LAN_AGREEMENTS_FILE, dossier monté) est relu à chaque demande ; sans fichier valide, ce
++// * sont les textes d'origine. Une entrée par langue proposée à la console.
++interface LanAgreementText {
++	language_name: string;
++	main_title: string;
++	main_text: string;
++	sub_title: string;
++	sub_text: string;
++	agree_text: string;
++	non_agree_text: string;
++}
++
++const lanAgreementFields: (keyof LanAgreementText)[] = ['language_name', 'main_title', 'main_text', 'sub_title', 'sub_text', 'agree_text', 'non_agree_text'];
++const lanDefaultText = 'Welcome to your selfhosted Pretendo server! Have fun! :)';
++const lanDefaultAgreements: LanAgreementText[] = ['English', 'Español', 'Français'].map(languageName => ({
++	language_name: languageName,
++	main_title: 'Pretendo Network Services Agreement',
++	main_text: lanDefaultText,
++	sub_title: 'Privacy Policy',
++	sub_text: lanDefaultText,
++	agree_text: 'I Accept',
++	non_agree_text: 'I Decline'
++}));
++
++function lanAgreements(): LanAgreementText[] {
++	const file = process.env.PN_LAN_AGREEMENTS_FILE;
++
++	if (!file || !fs.existsSync(file)) {
++		return lanDefaultAgreements;
++	}
++
++	try {
++		const data = JSON.parse(fs.readFileSync(file, 'utf8'));
++		const list: Partial<LanAgreementText>[] = Array.isArray(data?.agreements) ? data.agreements : [];
++		const valid = list.filter(entry => lanAgreementFields.every(field => typeof entry[field] === 'string' && entry[field] !== '')) as LanAgreementText[];
++
++		// * La Wii U affiche le choix de la langue dans une fenêtre de 4 boutons : avec 5 langues, elle se
++		// * fige avant de l'afficher (constaté le 05/11/2026)
++		return valid.length ? valid.slice(0, 4) : lanDefaultAgreements;
++	} catch {
++		return lanDefaultAgreements;
++	}
++}
++
++// * Une section CDATA ne peut pas contenir « ]]> »
++const lanCdata = (text: string): string => text.replace(/\]\]>/g, ']] >');
++
+ /**
+  * [GET]
+  * Replacement for: https://account.nintendo.net/v1/api/content/agreements/TYPE/REGION/VERSION
+@@ -16,107 +65,39 @@
+ 
+ 	response.send(xmlbuilder.create({
+ 		agreements: {
+-			agreement: [
+-				{
+-					country: 'US',
+-					language: 'en',
+-					language_name: 'English',
+-					publish_date: '2014-09-29T20:07:35',
+-					texts: {
+-						'@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+-						'@xsi:type': 'chunkedStoredAgreementText',
+-
+-						main_title: {
+-							'#cdata': 'Pretendo Network Services Agreement'
+-						},
+-						agree_text: {
+-							'#cdata': 'I Accept'
+-						},
+-						non_agree_text: {
+-							'#cdata': 'I Decline'
+-						},
+-						main_text: {
+-							'@index': '1',
+-							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+-						},
+-						sub_title: {
+-							'#cdata': 'Privacy Policy'
+-						},
+-						sub_text: {
+-							'@index': '1',
+-							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+-						},
++			agreement: lanAgreements().map(agreement => ({
++				country: 'US',
++				language: 'en',
++				language_name: agreement.language_name,
++				publish_date: '2014-09-29T20:07:35',
++				texts: {
++					'@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
++					'@xsi:type': 'chunkedStoredAgreementText',
++
++					main_title: {
++						'#cdata': lanCdata(agreement.main_title)
+ 					},
+-					type: 'NINTENDO-NETWORK-EULA',
+-					version: '0300',
+-				},
+-				{
+-					country: 'US',
+-					language: 'en',
+-					language_name: 'Español',
+-					publish_date: '2014-09-29T20:07:35',
+-					texts: {
+-						'@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+-						'@xsi:type': 'chunkedStoredAgreementText',
+-
+-						main_title: {
+-							'#cdata': 'Pretendo Network Services Agreement'
+-						},
+-						agree_text: {
+-							'#cdata': 'I Accept'
+-						},
+-						non_agree_text: {
+-							'#cdata': 'I Decline'
+-						},
+-						main_text: {
+-							'@index': '1',
+-							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+-						},
+-						sub_title: {
+-							'#cdata': 'Privacy Policy'
+-						},
+-						sub_text: {
+-							'@index': '1',
+-							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+-						},
++					agree_text: {
++						'#cdata': lanCdata(agreement.agree_text)
++					},
++					non_agree_text: {
++						'#cdata': lanCdata(agreement.non_agree_text)
++					},
++					main_text: {
++						'@index': '1',
++						'#cdata': lanCdata(agreement.main_text)
++					},
++					sub_title: {
++						'#cdata': lanCdata(agreement.sub_title)
++					},
++					sub_text: {
++						'@index': '1',
++						'#cdata': lanCdata(agreement.sub_text)
+ 					},
+-					type: 'NINTENDO-NETWORK-EULA',
+-					version: '0300',
+ 				},
+-				{
+-					country: 'US',
+-					language: 'en',
+-					language_name: 'Français',
+-					publish_date: '2014-09-29T20:07:35',
+-					texts: {
+-						'@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+-						'@xsi:type': 'chunkedStoredAgreementText',
+-
+-						main_title: {
+-							'#cdata': 'Pretendo Network Services Agreement'
+-						},
+-						agree_text: {
+-							'#cdata': 'I Accept'
+-						},
+-						non_agree_text: {
+-							'#cdata': 'I Decline'
+-						},
+-						main_text: {
+-							'@index': '1',
+-							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+-						},
+-						sub_title: {
+-							'#cdata': 'Privacy Policy'
+-						},
+-						sub_text: {
+-							'@index': '1',
+-							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+-						},
+-					},
+-					type: 'NINTENDO-NETWORK-EULA',
+-					version: '0300',
+-				}
+-			]
++				type: 'NINTENDO-NETWORK-EULA',
++				version: '0300',
++			}))
+ 		}
+ 	}).end());
+ });

@@ -1,0 +1,16 @@
+diff --git a/nex/register_common_authentication_server_protocols.go b/nex/register_common_authentication_server_protocols.go
+index 4df0551..ae3c8b8 100644
+--- a/nex/register_common_authentication_server_protocols.go
++++ b/nex/register_common_authentication_server_protocols.go
+@@ -27,7 +27,10 @@ func registerCommonAuthenticationServerProtocols() {
+ 	secureStationURL.SetStreamType(constants.StreamTypeRVSecure)
+ 	secureStationURL.SetType(2)
+ 
+-	commonTicketGrantingProtocol.SecureServerAccount = globals.SecureEndpoint.ServerAccount
++	// * Pretendo LAN : globals.SecureEndpoint est créé par StartSecureServer, lancé en parallèle
++	// * (main.go) : le lire ici faisait planter le serveur un démarrage sur deux. SecureServerAccount
++	// * est la même valeur, initialisée dans init() avant les deux serveurs.
++	commonTicketGrantingProtocol.SecureServerAccount = globals.SecureServerAccount
+ 	commonTicketGrantingProtocol.SessionKeyLength = 16
+ 	commonTicketGrantingProtocol.SecureStationURL = secureStationURL
+ 	commonTicketGrantingProtocol.BuildName = types.NewString(serverBuildString)

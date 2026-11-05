@@ -1,0 +1,59 @@
+diff --git a/src/models/pnid.ts b/src/models/pnid.ts
+index 5e2cc34..1f272d3 100644
+--- a/src/models/pnid.ts
++++ b/src/models/pnid.ts
+@@ -13,6 +13,27 @@ import { IPNID, IPNIDMethods, PNIDModel } from '@/types/mongoose/pnid';
+ import { PNIDPermissionFlag } from '@/types/common/permission-flags';
+ import { config } from '@/config-manager';
+ 
++// * Pretendo LAN : les images de Mii viennent de l'API Mii Studio de Nintendo.
++// * Sans Internet (serveur LAN hors ligne), on utilise une silhouette générique au lieu de
++// * faire échouer la création du PNID ou le changement de Mii. Les vraies images se
++// * régénèrent ensuite avec la commande « pretendo mii-refresh ».
++const OFFLINE_MII_IMAGE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAABUUlEQVR42u3YMQ0AIRQFQfwLoEIALsEDHdnZBAP/TXM3hiRJkiRJkiRJkiRJkiRJkiRJ0qfNtY8rBEZ+fa4XHB0Gw4NgfAgMD4LxITA+BMaHwPgQGB8C40MAAADGh8D4EAAAgPEhAAAAAAAwPgQAAAAAAAAAAAAAAAAAAADGhwAC4wMAAAAAAGBNAASAAFAPgRUBEABKIrAeAKoisFoYgbUAUBWBlcIIrBNGYJUwAmuEEVghjMD1oxBcO4zAlaMQXDWIwfUCOFxBkiRJ8hWg9Le/fwLGhsLoMBgdBsODYHgQDA+C4UEwPgSGB8H4EBgeBONDYHwIjA+B8SEwPgTGh8D4EAAAgPHzCIwURmCcOALDhAEYJY7AIGEAxogjMEQYgBHiCAwQBuD4cQQOD4DjVwE4ehyBgwPg6AB4SQCOHUfg0AA4NgAeAB4AHgAeAN6vAC6CBcP2rNnfUAAAAABJRU5ErkJggg==', 'base64');
++let miiStudioDownUntil = 0; // * après un échec, on n'attend plus Mii Studio pendant 60 s
++
++async function fetchMiiStudioImage(url: string): Promise<Buffer> {
++	if (Date.now() < miiStudioDownUntil) {
++		return OFFLINE_MII_IMAGE;
++	}
++
++	try {
++		return await got(url, { timeout: { request: 5000 }, retry: { limit: 0 } }).buffer();
++	} catch (error) {
++		miiStudioDownUntil = Date.now() + 60000;
++		LOG_WARN(`Mii Studio injoignable, image de Mii générique utilisée : ${(error as Error).message}`);
++		return OFFLINE_MII_IMAGE;
++	}
++}
++
+ let stripe: Stripe;
+ 
+ if (config.stripe?.secret_key) {
+@@ -192,7 +213,7 @@ PNIDSchema.method('generateMiiImages', async function generateMiiImages(): Promi
+ 		width: 128,
+ 		instanceCount: 1,
+ 	});
+-	const miiStudioNormalFaceImageData = await got(miiStudioUrl).buffer();
++	const miiStudioNormalFaceImageData = await fetchMiiStudioImage(miiStudioUrl);
+ 	const pngData = await imagePixels(miiStudioNormalFaceImageData);
+ 	const tga = TGA.createTgaBuffer(pngData.width, pngData.height, Uint8Array.from(pngData.data), false);
+ 
+@@ -209,7 +230,7 @@ PNIDSchema.method('generateMiiImages', async function generateMiiImages(): Promi
+ 			width: 128,
+ 			instanceCount: 1,
+ 		});
+-		const miiStudioExpressionImageData = await got(miiStudioExpressionUrl).buffer();
++		const miiStudioExpressionImageData = await fetchMiiStudioImage(miiStudioExpressionUrl);
+ 		await uploadCDNAsset('pn-cdn', `${userMiiKey}/${expression}.png`, miiStudioExpressionImageData, 'public-read');
+ 	}
+ 
+@@ -218,7 +239,7 @@ PNIDSchema.method('generateMiiImages', async function generateMiiImages(): Promi
+ 		width: 270,
+ 		instanceCount: 1,
+ 	});
+-	const miiStudioBodyImageData = await got(miiStudioBodyUrl).buffer();
++	const miiStudioBodyImageData = await fetchMiiStudioImage(miiStudioBodyUrl);
+ 	await uploadCDNAsset('pn-cdn', `${userMiiKey}/body.png`, miiStudioBodyImageData, 'public-read');
+ });
+ 

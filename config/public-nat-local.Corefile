@@ -1,0 +1,25 @@
+# DNS des consoles avec le test NAT local (voir nncs-local.py). Copié dans public-lan.Corefile par « pretendo nat-apply ».
+# nncs1 suit la redirection générale vers le serveur ; nncs2 doit être une autre adresse.
+nncs2.app.nintendowifi.net nncs2.app.nintendo.net nncs2.app.pretendo.cc nncs2.app.pretendo.network {
+    log
+    errors
+    hosts {
+        {$NNCS_IP} nncs2.app.nintendowifi.net nncs2.app.nintendo.net nncs2.app.pretendo.cc nncs2.app.pretendo.network
+    }
+}
+
+# Redirect all Pretendo/Nintendo requests to a local server
+. {
+    log
+    errors
+    rewrite name regex (.*\.)?nintendo\.net server.local answer auto
+    rewrite name regex (.*\.)?nintendowifi\.net server.local answer auto
+    rewrite name regex (.*\.)?pretendo\.cc server.local answer auto
+    rewrite name regex (.*\.)?pretendo\.network server.local answer auto
+    rewrite name regex (.*\.)?pretendo-cdn\.b-cdn\.net server.local answer auto
+    hosts {
+        {$SERVER_IP} server.local
+        fallthrough
+    }
+    forward . /etc/resolv.conf
+}

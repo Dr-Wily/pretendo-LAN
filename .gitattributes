@@ -1,0 +1,10 @@
+# Les scripts sont exécutés sous Linux : toujours en LF, même depuis Windows
+* text=auto eol=lf
+*.sh text eol=lf
+tools/pretendo text eol=lf
+*.py text eol=lf
+*.conf text eol=lf
+*.tmpl text eol=lf
+*.env text eol=lf
+# Les correctifs doivent rester octet pour octet (certains fichiers d'upstream sont en CRLF)
+*.patch -text

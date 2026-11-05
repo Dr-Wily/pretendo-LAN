@@ -1,0 +1,24 @@
+--- a/src/services/api/routes/topics.ts
++++ b/src/services/api/routes/topics.ts
+@@ -236,6 +236,11 @@
+ 		}
+ 	]);
+ 
++	// Pretendo LAN : sans communauté, l'accès à validCommunities[0] plantait tout le serveur
++	if (validCommunities.length === 0) {
++		return [];
++	}
++
+ 	const communityIDs = validCommunities[0].communities;
+ 
+ 	if (!communityIDs) {
+@@ -272,7 +277,8 @@
+ 		}
+ 	]);
+ 
+-	if (popularCommunities.length < limit) {
++	// Pretendo LAN : avec peu de communautés, la recherche doublait sa période sans fin
++	if (popularCommunities.length < limit && hours < 24 * 365) {
+ 		return calculateMostPopularCommunities(hours + hours, limit);
+ 	}
+ 

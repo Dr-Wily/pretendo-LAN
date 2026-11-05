@@ -1,0 +1,26 @@
+# Fragment fusionné dans compose.override.yml par install.sh.
+# Chemins relatifs au dossier d'installation (/opt/pretendo par défaut).
+# Variables remplacées : ${GAME_AUTH_PORT} ${GAME_SECURE_PORT}
+services:
+  mario-kart-8:
+    build: ./games/mario-kart-8
+    init: true
+    # main.py attend « Entrée » sur stdin pour quitter : sans TTY il reçoit EOF
+    # et s'arrête aussitôt (boucle de redémarrage). On lui garde un stdin ouvert.
+    stdin_open: true
+    tty: true
+    restart: always
+    depends_on:
+      - account
+      - friends
+      - mongodb
+      - redis
+      - minio
+    dns: 172.20.0.200
+    networks:
+      - internal
+    ports:
+      - "${GAME_AUTH_PORT}:${GAME_AUTH_PORT}/udp"
+      - "${GAME_SECURE_PORT}:${GAME_SECURE_PORT}/udp"
+    env_file:
+      - ./games/mario-kart-8/runtime.env

@@ -1,0 +1,25 @@
+diff --git a/nex/friends-wiiu/update_and_get_all_information.go b/nex/friends-wiiu/update_and_get_all_information.go
+index 5eaf730..7792b4c 100644
+--- a/nex/friends-wiiu/update_and_get_all_information.go
++++ b/nex/friends-wiiu/update_and_get_all_information.go
+@@ -36,6 +36,10 @@ func UpdateAndGetAllInformation(err error, packet nex.PacketInterface, callID ui
+ 		globals.ConnectedUsers.Set(pid, connectedUser)
+ 	}
+ 
++	// * Pretendo LAN : à placer avant la copie. Sinon la présence enregistrée reste hors ligne, et un ami qui
++	// * se connecte ensuite voit ce joueur hors ligne jusqu'à sa prochaine mise à jour de présence.
++	presence.Online = types.NewPrimitiveBool(true) // * Force online status. I have no idea why this is always false
++	presence.PID = connection.PID()                // * WHY IS THIS SET TO 0 BY DEFAULT??
+ 	connectedUser.PresenceV2 = presence.Copy().(*friends_wiiu_types.NintendoPresenceV2)
+ 
+ 	database_wiiu.UpdateNetworkAccountInfo(pid, nnaInfo, birthday)
+@@ -88,9 +92,6 @@ func UpdateAndGetAllInformation(err error, packet nex.PacketInterface, callID ui
+ 
+ 	// * Update user information
+ 
+-	presence.Online = types.NewPrimitiveBool(true) // * Force online status. I have no idea why this is always false
+-	presence.PID = connection.PID()                // * WHY IS THIS SET TO 0 BY DEFAULT??
+-
+ 	notifications_wiiu.SendPresenceUpdate(presence)
+ 
+ 	if os.Getenv("PN_FRIENDS_CONFIG_ENABLE_BELLA") == "true" {

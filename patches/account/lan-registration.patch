@@ -1,0 +1,92 @@
+--- a/src/services/nnas/routes/support.ts
++++ b/src/services/nnas/routes/support.ts
+@@ -1,4 +1,3 @@
+-import dns from 'node:dns';
+ import express from 'express';
+ import xmlbuilder from 'xmlbuilder';
+ import moment from 'moment';
+@@ -29,22 +28,23 @@
+ 		return;
+ 	}
+ 
+-	const domain = email.split('@')[1];
++	// Pretendo LAN : pas de vérification MX. Sans Internet, tous les domaines
++	// seraient refusés, et les mails restent dans Mailpit quelle que soit l'adresse.
++	if (typeof email !== 'string' || !/^[^@\s]+@[^@\s]+$/.test(email)) {
++		response.send(xmlbuilder.create({
++			errors: {
++				error: {
++					cause: 'email',
++					code: '0103',
++					message: 'Email format is invalid'
++				}
++			}
++		}).end());
+ 
+-	dns.resolveMx(domain, (error: NodeJS.ErrnoException | null) => {
+-		if (error) {
+-			return response.send(xmlbuilder.create({
+-				errors: {
+-					error: {
+-						code: '1126',
+-						message: 'The domain "' + domain + '" is not accessible.'
+-					}
+-				}
+-			}).end());
+-		}
++		return;
++	}
+ 
+-		response.send();
+-	});
++	response.send();
+ });
+ 
+ /**
+--- a/src/middleware/ratelimit.ts
++++ b/src/middleware/ratelimit.ts
+@@ -5,7 +5,7 @@
+ 
+ export default ratelimit({
+ 	windowMs: 60 * 1000,
+-	max: 1,
++	max: 10, // Pretendo LAN : un essai par minute bloquait toute nouvelle tentative
+ 	keyGenerator: (request: express.Request): string => {
+ 		let data = getValueFromHeaders(request.headers, 'x-nintendo-device-cert');
+ 
+--- a/src/services/nnas/routes/people.ts
++++ b/src/services/nnas/routes/people.ts
+@@ -64,6 +64,19 @@
+ 	}
+ 
+ 	const person: Person = request.body.person;
++
++	// Pretendo LAN : sans réponse ici, la console attendrait jusqu'à l'expiration
++	if (!person || !person.user_id) {
++		response.status(400).send(xmlbuilder.create({
++			error: {
++				cause: 'Bad Request',
++				code: '1600',
++				message: 'Unable to process request'
++			}
++		}).end());
++
++		return;
++	}
+ 
+ 	const userExists = await doesPNIDExist(person.user_id);
+ 
+@@ -197,7 +210,12 @@
+ 		await session.endSession();
+ 	}
+ 
+-	await sendConfirmationEmail(pnid);
++	// Pretendo LAN : le compte existe déjà, un mail en échec ne doit pas bloquer la console
++	try {
++		await sendConfirmationEmail(pnid);
++	} catch (error) {
++		LOG_ERROR('[POST] /v1/api/people (mail de confirmation) : ' + error);
++	}
+ 
+ 	response.send(xmlbuilder.create({
+ 		person: {

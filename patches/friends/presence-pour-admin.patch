@@ -1,0 +1,86 @@
+diff --git a/lan_presence.go b/lan_presence.go
+new file mode 100644
+--- /dev/null
++++ b/lan_presence.go
+@@ -0,0 +1,81 @@
++package main
++
++// * Pretendo LAN : présence des joueurs connectés (console, jeu en cours), lue par l'interface
++// * d'administration. Lecture seule, publiée sur 127.0.0.1 de l'hôte seulement (compose.override.yml).
++// * Inactive sans PN_FRIENDS_LAN_PRESENCE_PORT.
++
++import (
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"os"
++
++	"github.com/PretendoNetwork/friends/globals"
++	friends_types "github.com/PretendoNetwork/friends/types"
++)
++
++type lanPresence struct {
++	PID      uint32 `json:"pid"`
++	Platform string `json:"platform"`
++	TitleID  string `json:"title_id"`
++	Message  string `json:"message"`
++}
++
++func lanPresenceList() []lanPresence {
++	list := []lanPresence{}
++	if globals.ConnectedUsers == nil {
++		return list
++	}
++
++	globals.ConnectedUsers.Each(func(pid uint32, user *friends_types.ConnectedUser) bool {
++		if user == nil {
++			return false
++		}
++
++		entry := lanPresence{PID: pid, Platform: "wiiu"}
++
++		if user.Platform == friends_types.CTR {
++			entry.Platform = "3ds"
++			if presence := user.Presence; presence != nil {
++				if presence.GameKey != nil && presence.GameKey.TitleID != nil {
++					entry.TitleID = fmt.Sprintf("%016X", presence.GameKey.TitleID.Value)
++				}
++				if presence.Message != nil {
++					entry.Message = presence.Message.Value
++				}
++			}
++		} else if presence := user.PresenceV2; presence != nil {
++			if presence.GameKey != nil && presence.GameKey.TitleID != nil {
++				entry.TitleID = fmt.Sprintf("%016X", presence.GameKey.TitleID.Value)
++			}
++			if presence.Message != nil {
++				entry.Message = presence.Message.Value
++			}
++		}
++
++		list = append(list, entry)
++
++		return false
++	})
++
++	return list
++}
++
++func init() {
++	port := os.Getenv("PN_FRIENDS_LAN_PRESENCE_PORT")
++	if port == "" {
++		return
++	}
++
++	go func() {
++		mux := http.NewServeMux()
++		mux.HandleFunc("/presence", func(w http.ResponseWriter, r *http.Request) {
++			w.Header().Set("Content-Type", "application/json")
++			_ = json.NewEncoder(w).Encode(lanPresenceList())
++		})
++
++		if err := http.ListenAndServe(":"+port, mux); err != nil {
++			fmt.Fprintf(os.Stderr, "Pretendo LAN, présence : %v\n", err)
++		}
++	}()
++}

@@ -1,0 +1,776 @@
+#!/usr/bin/env bash
+# pretendo : administration du serveur Pretendo LAN (installée par install.sh)
+set -uo pipefail
+
+conf() { grep -E "^$1=" /etc/pretendo-lan.conf 2>/dev/null | cut -d= -f2-; }
+INSTALL_DIR="${PRETENDO_DIR:-$(conf INSTALL_DIR)}"; INSTALL_DIR="${INSTALL_DIR:-/opt/pretendo}"
+REPO_DIR="$(conf REPO_DIR)"
+BACKUP_DIR="${PRETENDO_BACKUP_DIR:-/opt/pretendo-backups}"
+cd "$INSTALL_DIR" || { echo "dossier $INSTALL_DIR introuvable" >&2; exit 1; }
+
+dc() { docker compose "$@"; }
+dcx() { docker compose exec -T "$@" </dev/null; }   # exec sans voler l'entrée standard
+# démarrage sans Internet : uniquement les images déjà présentes, jamais de build ni de pull
+dc_up() { docker compose up -d --no-build --pull never "$@"; }
+# tant que ce fichier existe (effacé au démarrage de la machine), la surveillance ne relance rien
+HOLD=/run/pretendo-lan.hold
+hold() { touch "$HOLD"; trap 'rm -f "$HOLD"' EXIT; }
+server_ip() { grep -E '^SERVER_IP=' .env | cut -d= -f2-; }
+nncs_ip() { grep -E '^NNCS_IP=' .env | cut -d= -f2-; }   # vide : test NAT public
+server_addr() { ip -4 -o addr show | awk -v ip="$(server_ip)" 'index($4, ip "/") == 1 {print $2, $4; exit}'; }   # interface et réseau
+same_net() { # same_net <ip> <ip/masque>
+    python3 -c 'import ipaddress, sys; sys.exit(ipaddress.ip_address(sys.argv[1]) not in ipaddress.ip_interface(sys.argv[2]).network)' "$1" "$2" 2>/dev/null
+}
+die() { echo "ERREUR : $*" >&2; exit 1; }
+project() { dc config --format json 2>/dev/null | jq -r .name; }
+games() { for f in games/*/game.conf; do [[ -f $f ]] && basename "$(dirname "$f")"; done; }
+game_get() { (. "games/$1/game.conf"; eval "echo \"\${$2:-}\""); }
+
+# brique (service compose) -> dossier git
+declare -A REPO=(
+    [account]=repos/account [website]=repos/website [friends]=repos/friends
+    [miiverse-api]=repos/miiverse-api [juxtaposition-ui]=repos/juxtaposition-ui
+    [boss]=repos/BOSS [wiiu-chat-authentication]=repos/wiiu-chat-authentication
+    [wiiu-chat-secure]=repos/wiiu-chat-secure [super-mario-maker]=repos/super-mario-maker
+    [splatoon]=repos/splatoon [minecraft-wiiu]=repos/minecraft-wiiu [pikmin-3]=repos/pikmin-3
+)
+for g in $(games); do REPO[$(game_get "$g" GAME_SERVICE)]="games/$g/src"; done
+
+repo_branch() {
+    local dir="$1" b
+    if [[ $dir == games/*/src ]]; then game_get "$(basename "$(dirname "$dir")")" GAME_BRANCH; return; fi
+    b=$(git config -f .gitmodules "submodule.$dir.branch" 2>/dev/null)
+    echo "${b:-$(git -C "$dir" remote show origin 2>/dev/null | awk '/HEAD branch/{print $NF}')}"
+}
+patch_dir() { # correctifs à réappliquer après un changement de version
+    local dir=$1
+    if [[ $dir == games/*/src ]]; then echo "$(dirname "$dir")/patches"; else echo "patches/${dir#repos/}"; fi
+}
+
+wait_mongo() {
+    [[ -n $(dc ps -q --status running mongodb 2>/dev/null) ]] || { echo "MongoDB ne tourne pas" >&2; return 1; }
+    for _ in $(seq 1 60); do
+        dcx mongodb mongosh --quiet --eval 'quit(rs.status().myState === 1 ? 0 : 1)' >/dev/null 2>&1 && return 0
+        sleep 2
+    done
+    echo "MongoDB ne répond pas (replica set non primaire)" >&2; return 1
+}
+
+register_games() {
+    # Les scripts d'upstream ne connaissent pas ces jeux : on (ré)enregistre leur
+    # entrée dans pretendo_account.servers (idempotent), puis on lance leurs crochets.
+    local ip; ip=$(server_ip)
+    wait_mongo || return 1
+    for g in $(games); do
+        (
+            . "games/$g/game.conf"
+            if [[ -n ${GAME_POSTGRES_DB:-} ]]; then   # base PostgreSQL propre au jeu
+                dcx postgres sh -c "psql -U \"\$POSTGRES_USER\" -d postgres -Atc \"select 1 from pg_database where datname='$GAME_POSTGRES_DB'\" | grep -q 1 \
+                    || psql -q -U \"\$POSTGRES_USER\" -d postgres -c 'create database \"$GAME_POSTGRES_DB\"'" >/dev/null && echo "  base PostgreSQL '$GAME_POSTGRES_DB' : OK"
+            fi
+            tids=$(printf "'%s'," $GAME_TITLE_IDS)
+            dcx mongodb mongosh --quiet pretendo_account --eval "
+                for (const mode of ['prod', 'test', 'dev']) {
+                    db.servers.updateOne(
+                        { game_server_id: '$GAME_SERVER_ID', access_mode: mode },
+                        { \$set: {
+                            service_name: '$GAME_NAME', service_type: 'nex', title_ids: [${tids%,}],
+                            ip: '$ip', port: $GAME_AUTH_PORT, maintenance_mode: false,
+                            device: $GAME_DEVICE, aes_key: '0'.repeat(64) } },
+                        { upsert: true });
+                }
+                print('$GAME_NAME : ' + db.servers.countDocuments({ game_server_id: '$GAME_SERVER_ID' }) + ' entrées dans la base de comptes');
+            "
+            if [[ -n ${GAME_COMMUNITY_ID:-} ]]; then   # communauté Miiverse du jeu (ex. : tournois de MK8)
+                dec=""; for t in $GAME_TITLE_IDS; do dec+="'$(printf %d "0x$t")',"; done
+                dcx mongodb mongosh --quiet pretendo_miiverse --eval "
+                    const new_ids = [${dec%,}];
+                    db.communities.updateOne(
+                        { type: 0, community_id: '$GAME_COMMUNITY_ID' },
+                        { \$setOnInsert: {
+                            platform_id: 0, name: '$GAME_NAME', description: '$GAME_NAME', open: true, allows_comments: true,
+                            type: 0, parent: null, owner: 0, created_at: new Date(), empathy_count: 0, followers: 0, has_shop_page: 0,
+                            icon: '', title_id: new_ids, community_id: '$GAME_COMMUNITY_ID', olive_community_id: '$GAME_COMMUNITY_ID',
+                            is_recommended: 0, app_data: '', user_favorites: [],
+                            permissions: { open: true, minimum_new_post_access_level: 0, minimum_new_comment_access_level: 0, minimum_new_community_access_level: 0 } } },
+                        { upsert: true });
+                " >/dev/null && echo "  communauté Miiverse '$GAME_NAME' : OK"
+            fi
+            if [[ -f games/$g/hooks.sh ]]; then
+                . "games/$g/hooks.sh"
+                declare -F game_post_start >/dev/null && game_post_start
+            fi
+        )
+    done
+}
+
+check_ip() {
+    local cfg cur
+    cfg=$(server_ip)
+    hostname -I | grep -qw "$cfg" && return 0
+    cur=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+    # pas de route par défaut (hors ligne) : première IP hors interfaces Docker
+    [[ -z $cur ]] && cur=$(ip -4 -o addr show scope global | awk '$2 !~ /^(docker|br-|veth)/{sub("/.*","",$4); print $4; exit}')
+    if [[ -n $cur ]]; then
+        echo "!!! L'IP de la machine ($cur) ne correspond plus à la config ($cfg)."
+        echo "!!! Les consoles ne pourront pas se connecter. Lance : pretendo change-ip $cur"
+    else
+        echo "!!! La machine n'a pas d'adresse réseau (attendue : $cfg)."
+    fi
+    return 1
+}
+
+wait_network() { # au démarrage, le DHCP n'a pas toujours fini quand le service se lance
+    local cfg; cfg=$(server_ip)
+    for _ in $(seq 1 60); do
+        hostname -I | grep -qw "$cfg" && return 0
+        sleep 2
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------- test NAT local
+# La seconde adresse n'est pas dans la configuration réseau de la machine : posée au démarrage du
+# service, puis reposée par la surveillance si le DHCP l'a retirée. /32 : elle ne sert à rien d'autre.
+nat_ip_up() {
+    local want dev _r; want=$(nncs_ip)
+    [[ -n $want ]] || return 0
+    hostname -I | grep -qwF "$want" && return 0
+    read -r dev _r < <(server_addr)
+    [[ -n $dev ]] && ip addr add "$want/32" dev "$dev"
+}
+
+nat_apply() { # DNS des consoles selon le test NAT choisi ; prend effet au prochain démarrage de coredns-public
+    local src=config/public.Corefile
+    [[ -n $(nncs_ip) ]] && src=config/public-nat-local.Corefile
+    nat_ip_up
+    [[ -f $src ]] || die "$src introuvable : relance install.sh"
+    cmp -s "$src" config/public-lan.Corefile && return 0
+    cat "$src" >config/public-lan.Corefile
+    [[ -n $(dc ps -q --status running coredns-public 2>/dev/null) ]] && dc restart coredns-public >/dev/null 2>&1
+    return 0
+}
+
+nat_ip_set() { # nat_ip_set <ip>|off
+    local new=$1 old dev cidr; old=$(nncs_ip)
+    read -r dev cidr < <(server_addr)
+    [[ -n $dev ]] || die "l'IP du serveur ($(server_ip)) n'est pas sur cette machine"
+    if [[ $new == off ]]; then
+        new=""
+    else
+        [[ $new =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "usage : pretendo nat-ip SECONDE_IP|off"
+        [[ $new != "$(server_ip)" ]] || die "la seconde IP doit être différente de celle du serveur"
+        same_net "$new" "$cidr" || die "$new n'est pas sur le réseau du serveur ($cidr)"
+        if ! hostname -I | grep -qwF "$new"; then
+            command -v arping >/dev/null || die "arping absent : apt install iputils-arping"
+            arping -D -q -c 2 -w 3 -I "$dev" "$new" || die "$new est déjà utilisée sur le réseau"
+        fi
+    fi
+    dc --profile nat-local rm -fs nncs >/dev/null 2>&1
+    [[ -n $old && $old != "$new" ]] && ip addr del "$old/32" dev "$dev" 2>/dev/null
+    sed -i '/^NNCS_IP=/d;/^COMPOSE_PROFILES=/d' .env
+    [[ -n $new ]] && printf 'NNCS_IP=%s\nCOMPOSE_PROFILES=nat-local\n' "$new" >>.env
+    nat_apply
+    dc_up --force-recreate coredns-public || die "redémarrage du DNS impossible"
+    [[ -n $new ]] && { dc_up nncs || die "démarrage du test NAT local impossible"; }
+    if [[ -n $new ]]; then echo "Test NAT local actif, seconde adresse $new. Réserve-la dans ta box, hors de sa plage DHCP."
+    else echo "Test NAT public de Pretendo actif (Internet requis)."; fi
+    echo "Les consoles refont leur test en relançant le mode en ligne du jeu."
+}
+
+# ---------------------------------------------------------------- sondes réelles
+# Chaque sonde teste ce que voit une console, depuis l'IP du serveur. 5xx ou pas de réponse = échec.
+http_ok() { [[ $(curl -s -m 8 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null) =~ ^[1-4] ]]; }
+
+dns_answer() { # dns_answer <nom> <serveur> : affiche l'adresse obtenue (rien si pas de réponse)
+    python3 - "$1" "$2" <<'PY' 2>/dev/null
+import socket, sys
+name, server = sys.argv[1:3]
+labels = b''.join(bytes([len(p)]) + p.encode() for p in name.split('.'))
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
+s.sendto(b'\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00' + labels + b'\x00\x00\x01\x00\x01', (server, 53))
+r = s.recv(512)
+if r[3] & 15 == 0 and r[7] > 0: print('.'.join(map(str, r[-4:])))
+PY
+}
+p_dns() { [[ $(dns_answer account.nintendo.net "$(server_ip)") == "$(server_ip)" ]]; }   # DNS des consoles
+# Résolution extérieure. Sans Internet sur la machine, son échec est normal et n'est pas une panne.
+host_online() { getent hosts nncs1.app.pretendo.cc >/dev/null; }
+p_dns_nat() { # test NAT des consoles
+    if [[ -n $(nncs_ip) ]]; then
+        [[ $(dns_answer nncs1.app.nintendowifi.net "$(server_ip)") == "$(server_ip)" && $(dns_answer nncs2.app.nintendowifi.net "$(server_ip)") == "$(nncs_ip)" ]]
+    else
+        [[ -n $(dns_answer nncs1.app.nintendowifi.net "$(server_ip)") ]] || ! host_online
+    fi
+}
+p_nncs() { # le test NAT local répond-il comme à une console, sur ses deux adresses ?
+    python3 - "$(server_ip)" "$(nncs_ip)" <<'PY' 2>/dev/null
+import socket, struct, sys
+serveur, seconde = sys.argv[1:3]
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind((serveur, 0)); s.settimeout(3)
+for adresse, t, source in ((serveur, 101, 10025), (serveur, 102, 50920), (seconde, 103, 10025)):
+    s.sendto(struct.pack('>IIII', t, 0, 0, 0), (adresse, 10025))
+    r, de = s.recvfrom(64)
+    if struct.unpack('>II', r[:8]) != (t, s.getsockname()[1]) or de != (adresse, source): sys.exit(1)
+PY
+}
+p_dns_int() { [[ -n $(dns_answer studio.mii.nintendo.com 172.20.0.200) ]] || ! host_online; }        # images des Mii
+p_dns_int_up() { # le conteneur répond-il ? Sans résolveur extérieur il renvoie une erreur : le relancer n'y changerait rien
+    python3 - <<'PY' 2>/dev/null
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(10)
+s.sendto(b'\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x05sonde\x07invalid\x00\x00\x01\x00\x01', ('172.20.0.200', 53))
+s.recv(512)
+PY
+}
+p_nginx() { # nginx seul : un nom inconnu ne passe par aucun service, toute réponse HTTP convient
+    [[ $(curl -s -m 8 -o /dev/null -w '%{http_code}' -H 'Host: sonde.invalid' "http://$(server_ip)/" 2>/dev/null) != 000 ]]
+}
+p_conntest() { http_ok -H 'Host: conntest.nintendowifi.net' "http://$(server_ip)/"; }
+p_account() { # lit la base de données : détecte aussi une panne de MongoDB ou un serveur figé
+    http_ok -H 'Host: account.nintendo.net' -H 'X-Nintendo-Client-ID: a2efa818a34fa16b8afbc8a74eba3eda' \
+        -H 'X-Nintendo-Client-Secret: c91cdb5658bd4954ade78533a339cf9a' "http://$(server_ip)/v1/api/people/pretendo-lan-sonde"
+}
+p_sssl() {
+    http_ok -k --tlsv1.0 --tls-max 1.1 --ciphers 'DEFAULT@SECLEVEL=0' --resolve "account.nintendo.net:443:$(server_ip)" \
+        https://account.nintendo.net/v1/api/admin/time
+}
+p_proxy()    { http_ok -x "http://$(server_ip):8080" http://account.pretendo.cc/v1/api/admin/time; }
+p_portal()   { http_ok "http://$(server_ip):$(web_port)/"; }
+p_miiverse() { http_ok -H 'Host: api.olv.pretendo.cc' "http://$(server_ip)/"; }
+p_juxt()     { http_ok -H 'Host: portal.olv.pretendo.cc' "http://$(server_ip)/"; }
+web_port() { local p; p=$(grep -E '^WEB_PORT=' "$REPO_DIR/versions.env" 2>/dev/null | cut -d= -f2); echo "${p:-8888}"; }
+has_sssl() { grep -q 'nginx-sssl:' compose.override.yml 2>/dev/null; }
+
+probes() { # affiche chaque sonde ; code de retour 1 si l'une échoue
+    local rc=0 line label fn
+    local list=("DNS des consoles:p_dns" "DNS du test NAT:p_dns_nat" "DNS interne (Mii Studio):p_dns_int" "Test de connexion:p_conntest" "Compte (HTTP):p_account")
+    has_sssl && list+=("Compte (SSSL, port 443):p_sssl")
+    [[ -n $(nncs_ip) ]] && list+=("Test NAT local:p_nncs")
+    list+=("Proxy Inkay (port 8080):p_proxy" "Portail web:p_portal" "Miiverse (API):p_miiverse" "Juxtaposition:p_juxt")
+    for line in "${list[@]}"; do
+        label=${line%:*}; fn=${line##*:}
+        if "$fn"; then echo "  $label : OK"; else echo "  !!! $label : ÉCHEC"; rc=1; fi
+    done
+    return $rc
+}
+
+check() { # attend que tout réponde (2 minutes au plus) ; sert après une installation ou une mise à jour
+    for _ in $(seq 1 24); do
+        probes >/dev/null && { probes; return 0; }
+        sleep 5
+    done
+    probes
+}
+
+# ---------------------------------------------------------------- surveillance automatique
+# Lancée chaque minute par pretendo-watchdog.timer. Relance ce qui est arrêté, et un service
+# « running » qui ne répond plus après 3 échecs de suite. Ne fait rien si le serveur a été
+# arrêté volontairement ou pendant une installation ou une mise à jour (fichier $HOLD).
+WD_DIR=/run/pretendo-lan.watchdog
+
+wd_check() { # wd_check <service> <sonde>
+    local svc=$1 f="$WD_DIR/$2" n
+    if "$2"; then rm -f "$f"; return 0; fi
+    n=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 ))
+    if (( n >= 3 )); then
+        rm -f "$f"; echo "sonde $2 en échec 3 fois de suite : relance de $svc"
+        dc restart "$svc" >/dev/null 2>&1
+    else
+        echo "$n" >"$f"
+    fi
+    return 1
+}
+
+watchdog() {
+    [[ -e $HOLD ]] && return 0
+    systemctl is-active -q docker || return 0
+    case "$(systemctl show -p ActiveState --value pretendo.service)" in
+        activating|deactivating) return 0 ;;
+        # par exemple après une mise à jour de Docker, qui arrête aussi ce service
+        inactive|failed) echo "pretendo.service arrêté, relance de tous les services"; systemctl start --no-block pretendo.service; return 0 ;;
+    esac
+    mkdir -p "$WD_DIR"
+    nat_ip_up
+    local states down paused
+    states=$(dc ps -a --format '{{.Service}} {{.State}}' 2>/dev/null)
+    paused=$(awk '$2=="paused"{print $1}' <<<"$states")
+    # shellcheck disable=SC2086
+    [[ -n $paused ]] && { echo "services en pause, relance de $(echo $paused)"; dc unpause $paused >/dev/null 2>&1; }
+    down=$(awk '$2=="exited" || $2=="created" || $2=="dead"{print $1}' <<<"$states")
+    if [[ -n $down || -z $states ]]; then
+        echo "services arrêtés, relance : ${down:-tous}"
+        dc_up >/dev/null 2>&1
+        return 0
+    fi
+    wd_check nginx p_nginx || return 0   # sans nginx, les autres sondes échoueraient aussi
+    wd_check coredns-public p_dns
+    wd_check coredns-public p_dns_nat
+    [[ -n $(nncs_ip) ]] && wd_check nncs p_nncs
+    wd_check coredns-internal p_dns_int_up
+    wd_check account p_account || return 0   # le SSSL et le proxy en dépendent : ne pas les relancer pour rien
+    has_sssl && wd_check nginx-sssl p_sssl
+    wd_check mitmproxy-pretendo p_proxy
+    wd_check website p_portal
+    wd_check miiverse-api p_miiverse
+    wd_check juxtaposition-ui p_juxt
+    return 0
+}
+
+# ---------------------------------------------------------------- certificat mitmproxy
+# Le CA mitmproxy n'existe que dans un volume Docker et il est compilé dans Inkay :
+# s'il est régénéré, les Wii U avec Inkay ne se connectent plus. On en garde une copie.
+MITM_DIR=/home/mitmproxy/.mitmproxy
+CERT_DIR="$INSTALL_DIR/certs"
+
+cert_export() {
+    mkdir -p "$CERT_DIR" && chmod 700 "$CERT_DIR"
+    dcx mitmproxy-pretendo sh -c "cd $MITM_DIR && tar cf - mitmproxy-ca* mitmproxy-dhparam.pem" | tar xf - -C "$CERT_DIR" \
+        && echo "CA mitmproxy copié dans $CERT_DIR"
+}
+
+cert_status() {
+    local live inkay
+    live=$(dcx mitmproxy-pretendo cat "$MITM_DIR/mitmproxy-ca-cert.pem" 2>/dev/null)
+    [[ -n $live ]] || { echo "mitmproxy ne tourne pas : état du CA inconnu"; return 1; }
+    echo "CA mitmproxy actif :"
+    echo "$live" | openssl x509 -noout -subject -enddate -fingerprint -sha256 | sed 's/^/  /'
+    inkay=$(openssl x509 -in repos/Inkay/data/ca.pem -noout -fingerprint -sha256 2>/dev/null)
+    if [[ $inkay == "$(echo "$live" | openssl x509 -noout -fingerprint -sha256)" ]]; then
+        echo "Inkay : compilé avec ce CA (OK) - $(stat -c '%y' repos/Inkay/Inkay-pretendo.wps 2>/dev/null | cut -d. -f1)"
+    else
+        echo "!!! Inkay n'est PAS compilé avec ce CA : lance 'pretendo inkay' puis copie le .wps sur la Wii U"
+    fi
+    if [[ -f $CERT_DIR/mitmproxy-ca-cert.pem ]] && cmp -s <(echo "$live") "$CERT_DIR/mitmproxy-ca-cert.pem"; then
+        echo "Copie de sauvegarde ($CERT_DIR) : à jour"
+    else
+        echo "Copie de sauvegarde : absente ou différente -> pretendo cert export"
+    fi
+    if [[ -s console-files/cert-chain.pem ]]; then
+        echo "SSSL : actif, $(openssl x509 -in console-files/cert-chain.pem -noout -enddate)"
+    else
+        echo "SSSL : inactif"
+    fi
+}
+
+cert_restore() {
+    local src=${1:-$CERT_DIR}
+    [[ -f $src/mitmproxy-ca.pem && -f $src/mitmproxy-ca-cert.pem ]] || die "CA introuvable dans $src"
+    tar cf - -C "$src" $(cd "$src" && ls mitmproxy-ca* mitmproxy-dhparam.pem 2>/dev/null) \
+        | dc exec -T mitmproxy-pretendo tar xf - -C "$MITM_DIR"
+    dc restart mitmproxy-pretendo >/dev/null && echo "CA mitmproxy restauré depuis $src"
+}
+
+# ---------------------------------------------------------------- clés BOSS (SpotPass)
+# Communes à toutes les consoles ; nécessaires seulement pour chiffrer du NOUVEAU contenu
+# SpotPass. Fichiers dans console-files/ : boss_keys.bin (Wii U), aes_keys.txt (3DS).
+# Vérification par MD5, comme get-boss-keys.sh d'upstream et le serveur BOSS lui-même.
+BOSS_ENV=environment/boss.local.env
+WIIU_AES_MD5=5202ce5099232c3d365e28379790a919
+WIIU_HMAC_MD5=b4482fef177b0100090ce0dbeb8ce977
+DS_AES_MD5=86fbc2bb4cb703b2a4c6cc9961319926
+
+boss_check() { # boss_check VAR MD5 [hex]
+    local v; v=$(grep -E "^$1=" "$BOSS_ENV" | tail -1 | cut -d= -f2-)
+    [[ -z $v ]] && { echo absente; return; }
+    if [[ ${3:-} == hex ]]; then v=$(printf %s "$v" | xxd -r -p | md5sum | cut -c1-32); else v=$(printf %s "$v" | md5sum | cut -c1-32); fi
+    [[ $v == "$2" ]] && echo ok || echo invalide
+}
+
+boss_status() {
+    echo "wiiu_aes=$(boss_check PN_BOSS_CONFIG_BOSS_WIIU_AES_KEY $WIIU_AES_MD5)" \
+         "wiiu_hmac=$(boss_check PN_BOSS_CONFIG_BOSS_WIIU_HMAC_KEY $WIIU_HMAC_MD5)" \
+         "ds_aes=$(boss_check PN_BOSS_CONFIG_BOSS_3DS_AES_KEY $DS_AES_MD5 hex)"
+}
+
+boss_apply() {
+    local changed=0 aes hmac ds
+    if [[ -f console-files/boss_keys.bin ]]; then
+        aes=$(head -c 16 console-files/boss_keys.bin)
+        hmac=$(tail -c +33 console-files/boss_keys.bin | head -c 64)
+        if [[ $(printf %s "$aes" | md5sum | cut -c1-32) == "$WIIU_AES_MD5" && $(printf %s "$hmac" | md5sum | cut -c1-32) == "$WIIU_HMAC_MD5" ]]; then
+            sed -i '/^PN_BOSS_CONFIG_BOSS_WIIU_\(AES\|HMAC\)_KEY=/d' "$BOSS_ENV"
+            printf 'PN_BOSS_CONFIG_BOSS_WIIU_AES_KEY=%s\nPN_BOSS_CONFIG_BOSS_WIIU_HMAC_KEY=%s\n' "$aes" "$hmac" >>"$BOSS_ENV"
+            echo "Clés BOSS Wii U : valides, enregistrées"; changed=1
+        else
+            echo "boss_keys.bin : clés INVALIDES (fichier tronqué ou mauvais outil ?) - fichier écarté"
+            rm -f console-files/boss_keys.bin   # sinon get-boss-keys.sh d'upstream ferait échouer setup-environment.sh
+        fi
+    fi
+    if [[ -f console-files/aes_keys.txt ]]; then
+        ds=$(grep -oP 'slot0x38KeyN=\K[0-9A-Fa-f]+' console-files/aes_keys.txt | head -1)
+        if [[ -n $ds && $(printf %s "$ds" | xxd -r -p | md5sum | cut -c1-32) == "$DS_AES_MD5" ]]; then
+            sed -i '/^PN_BOSS_CONFIG_BOSS_3DS_AES_KEY=/d' "$BOSS_ENV"
+            echo "PN_BOSS_CONFIG_BOSS_3DS_AES_KEY=$ds" >>"$BOSS_ENV"
+            echo "Clé BOSS 3DS : valide, enregistrée"; changed=1
+        else
+            echo "aes_keys.txt : clé slot0x38KeyN absente ou INVALIDE - fichier écarté"
+            rm -f console-files/aes_keys.txt
+        fi
+    fi
+    chmod 600 console-files/boss_keys.bin console-files/aes_keys.txt "$BOSS_ENV" 2>/dev/null
+    [[ $changed -eq 1 ]] && dc_up --force-recreate boss >/dev/null 2>&1 && echo "Serveur BOSS redémarré"
+    boss_status
+}
+
+boss_ftp() { # récupère SD:/boss_keys.bin sur la Wii U (ftpiiu lancé)
+    local ip; ip=$(grep -E '^WIIU_IP=' .env | cut -d= -f2-)
+    [[ -n $ip ]] || die "WIIU_IP absent de $INSTALL_DIR/.env (sudo ./install.sh --wiiu-ip IP)"
+    mkdir -p console-files
+    timeout 30 tnftp -o console-files/boss_keys.bin.tmp "ftp://user:pass@$ip/fs/vol/external01/boss_keys.bin" </dev/null >/dev/null 2>&1 \
+        || { rm -f console-files/boss_keys.bin.tmp; die "FTP vers $ip impossible (ftpiiu lancé ? boss_keys.bin à la racine de la SD ?)"; }
+    mv console-files/boss_keys.bin.tmp console-files/boss_keys.bin
+    echo "boss_keys.bin récupéré depuis la Wii U ($ip)"
+}
+
+# ---------------------------------------------------------------- sauvegarde / restauration
+CONFIG_FILES=(.env secrets.txt environment compose.override.yml admin-password.txt certs games/*/secrets.env games/*/runtime.env config/accords)
+SECRET_FILES=(console-files/cert-chain.pem console-files/ssl-cert-private-key.pem console-files/CACERT_NINTENDO_CA_G3.der
+              console-files/boss_keys.bin console-files/aes_keys.txt)
+
+backup() {
+    local label=${1:-} dest
+    dest="$BACKUP_DIR/$(date +%Y%m%d-%H%M%S)${label:+-$label}"
+    mkdir -p "$dest" && chmod 700 "$BACKUP_DIR"
+    echo "Sauvegarde dans $dest"
+    cert_export >/dev/null
+    wait_mongo && dcx mongodb mongodump --quiet --archive --gzip >"$dest/mongodb.archive.gz" && echo "  MongoDB : OK"
+    dcx postgres sh -c 'pg_dumpall -U "$POSTGRES_USER"' | gzip >"$dest/postgres.sql.gz" && echo "  PostgreSQL : OK"
+    docker run --rm -v "$(project)_minio-s3-data:/data:ro" -v "$dest:/b" --entrypoint tar "$(dc config --images | grep -m1 '^nginx')" \
+        czf /b/minio-data.tar.gz -C /data . && echo "  MinIO : OK"
+    tar czf "$dest/config.tar.gz" $(ls -d "${CONFIG_FILES[@]}" "${SECRET_FILES[@]}" 2>/dev/null) && echo "  Configuration, secrets, certificats : OK"
+    # base SQLite de Mailpit + son journal WAL (les mails récents ne sont que dans -wal)
+    dcx mailpit sh -c 'cd /data && tar cf - mailpit.db*' >"$dest/mailpit.tar" 2>/dev/null && echo "  Mails : OK"
+    { git submodule status; for g in $(games); do echo " $(git -C "games/$g/src" rev-parse HEAD) games/$g/src"; done; } >"$dest/versions.txt"
+    # rétention : 7 sauvegardes automatiques (nocturnes), 10 manuelles
+    ls -1dt "$BACKUP_DIR"/*-auto/ 2>/dev/null | tail -n +8 | xargs -r rm -rf
+    ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | grep -v -- '-auto/$' | tail -n +11 | xargs -r rm -rf
+}
+
+restore() {
+    local src="" with_config=0 yes=0
+    for a in "$@"; do
+        case "$a" in --with-config) with_config=1 ;; --yes) yes=1 ;; *) src=$a ;; esac
+    done
+    [[ -n $src ]] || { echo "Sauvegardes disponibles :"; ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | sed 's/^/  /'; die "usage : pretendo restore <dossier> [--with-config] [--yes]"; }
+    src=${src%/}; [[ -d $src ]] || src="$BACKUP_DIR/$src"
+    [[ -f $src/mongodb.archive.gz && -f $src/postgres.sql.gz ]] || die "sauvegarde incomplète ou introuvable : $src"
+    if [[ $yes -eq 0 ]]; then
+        echo "Restaurer $src ? Les données actuelles seront REMPLACÉES$([[ $with_config -eq 1 ]] && echo ", ainsi que la configuration et les secrets")."
+        read -r -p "Taper 'oui' pour continuer : " a; [[ $a == oui ]] || exit 1
+    fi
+    backup avant-restauration
+    local vproj; vproj=$(project)
+    if [[ $with_config -eq 1 && -f $src/config.tar.gz ]]; then
+        tar xzf "$src/config.tar.gz" -C "$INSTALL_DIR" && echo "  Configuration restaurée"
+    fi
+    echo "Arrêt des services applicatifs…"
+    dc_up mongodb postgres redis minio mailpit coredns-internal nginx >/dev/null 2>&1
+    local apps; apps=$(dc config --services | grep -vxE 'mongodb|postgres|redis|minio|mailpit|coredns-internal|nginx')
+    dc stop $apps >/dev/null 2>&1
+    wait_mongo && dc exec -T mongodb mongorestore --quiet --drop --archive --gzip <"$src/mongodb.archive.gz" && echo "  MongoDB : restauré"
+    for db in $(gunzip -c "$src/postgres.sql.gz" | grep -oP '^CREATE DATABASE \K[^ ;]+'); do
+        dcx postgres sh -c "psql -q -U \"\$POSTGRES_USER\" -d postgres -c 'DROP DATABASE IF EXISTS $db WITH (FORCE)'" >/dev/null
+    done
+    gunzip -c "$src/postgres.sql.gz" | dc exec -T postgres sh -c 'psql -q -U "$POSTGRES_USER" -d postgres' >/dev/null 2>&1
+    echo "  PostgreSQL : restauré"
+    if [[ -f $src/minio-data.tar.gz ]]; then
+        dc stop minio >/dev/null 2>&1
+        docker run --rm -v "${vproj}_minio-s3-data:/data" -v "$src:/b:ro" --entrypoint sh "$(dc config --images | grep -m1 '^nginx')" \
+            -c 'rm -rf /data/* /data/.[!.]* 2>/dev/null; tar xzf /b/minio-data.tar.gz -C /data' && echo "  MinIO : restauré"
+    fi
+    if [[ -s $src/mailpit.tar ]]; then
+        dc stop mailpit >/dev/null 2>&1
+        docker run --rm -v "${vproj}_mailpit-mail:/data" -v "$src:/b:ro" --entrypoint sh "$(dc config --images | grep -m1 '^nginx')" \
+            -c 'rm -f /data/mailpit.db*; tar xf /b/mailpit.tar -C /data' && echo "  Mails : restaurés"
+    fi
+    nat_apply
+    dc_up >/dev/null 2>&1
+    [[ $with_config -eq 1 && -f $CERT_DIR/mitmproxy-ca.pem ]] && sleep 3 && cert_restore
+    register_games
+    echo "Restauration terminée. Si l'IP du serveur a changé : pretendo change-ip <nouvelle IP>"
+}
+
+# ---------------------------------------------------------------- versions / mises à jour
+versions() {
+    printf '%-26s %-10s %-12s %s\n' BRIQUE ACTUEL DISPONIBLE BRANCHE
+    for svc in $(printf '%s\n' "${!REPO[@]}" | sort); do
+        local dir=${REPO[$svc]} br cur rem
+        br=$(repo_branch "$dir"); cur=$(git -C "$dir" rev-parse --short=8 HEAD)
+        rem=$(timeout 15 git -C "$dir" ls-remote origin "refs/heads/$br" 2>/dev/null | cut -c1-8)
+        [[ -z $rem ]] && rem="(hors ligne)"
+        [[ $rem == "$cur" ]] && rem="à jour"
+        printf '%-26s %-10s %-12s %s\n' "$svc" "$cur" "$rem" "$br"
+    done
+}
+
+wait_running() { # le service tourne-t-il sans redémarrer en boucle ?
+    local svc=$1 n0 n1
+    sleep 5; n0=$(docker inspect -f '{{.RestartCount}}' "$(dc ps -q "$svc")" 2>/dev/null || echo 0)
+    sleep 25; n1=$(docker inspect -f '{{.RestartCount}}' "$(dc ps -q "$svc")" 2>/dev/null || echo 99)
+    [[ "$(docker inspect -f '{{.State.Running}}' "$(dc ps -q "$svc")" 2>/dev/null)" == true && $n0 == "$n1" ]]
+}
+
+checkout_brick() { # checkout_brick <dossier> <commit> : change de version + réapplique les correctifs
+    local dir=$1 rev=$2 pdir; pdir=$(patch_dir "$dir")
+    git -C "$dir" reset -q --hard && git -C "$dir" clean -qfd
+    git -C "$dir" checkout -q -f "$rev" && git -C "$dir" submodule -q update --init --recursive --force || return 1
+    if [[ -d $pdir ]]; then
+        for p in "$pdir"/*; do
+            [[ -f $p ]] || continue
+            git -C "$dir" apply "$INSTALL_DIR/$p" 2>/dev/null || { echo "Le correctif $p ne s'applique plus sur cette version."; return 1; }
+        done
+    fi
+    # correctifs propres à Pretendo LAN (dépôt), après ceux d'upstream
+    if [[ $dir == repos/* && -d $REPO_DIR/patches/${dir#repos/} ]]; then
+        for p in "$REPO_DIR/patches/${dir#repos/}"/*.patch; do
+            [[ -f $p ]] || continue
+            git -C "$dir" apply "$p" 2>/dev/null || { echo "Le correctif Pretendo LAN $(basename "$p") ne s'applique plus sur cette version."; return 1; }
+        done
+    fi
+}
+
+record_brick() { # mémorise la version choisie (sous-module upstream ou module de jeu)
+    local dir=$1 msg=$2
+    if [[ $dir == repos/* ]]; then
+        git add "$dir" && git -c user.name=pretendo -c user.email=pretendo@localhost commit -qm "$msg" 2>/dev/null
+    else
+        touch "$(dirname "$dir")/.pinned-by-update"   # install.sh ne reviendra pas au commit de game.conf
+    fi
+}
+
+update_brick() {
+    local svc=$1 target=${2:-} dir=${REPO[$1]:-}
+    [[ -n $dir ]] || die "brique inconnue : $svc (voir 'pretendo versions')"
+    local old; old=$(git -C "$dir" rev-parse HEAD)
+    [[ -z $target ]] && { git -C "$dir" fetch -q origin || die "pas d'accès à GitHub"; target="origin/$(repo_branch "$dir")"; }
+    git -C "$dir" rev-parse -q --verify "$target^{commit}" >/dev/null || git -C "$dir" fetch -q origin
+    local new; new=$(git -C "$dir" rev-parse "$target^{commit}") || die "version introuvable : $target"
+    [[ $new == "$old" ]] && { echo "$svc est déjà sur ${new:0:8}"; return 0; }
+    [[ $svc == account ]] && echo "ATTENTION : une nouvelle version d'account peut changer l'API gRPC utilisée par les serveurs de jeux."
+
+    backup "avant-$svc"
+    mkdir -p .rollback; echo "$old" >".rollback/$svc"
+    echo "Mise à jour de $svc : ${old:0:8} -> ${new:0:8}"
+    if checkout_brick "$dir" "$new" && dc build "$svc" && dc_up "$svc" && wait_running "$svc" && check; then
+        record_brick "$dir" "update $svc ${new:0:8}"
+        register_games >/dev/null
+        echo "OK : $svc tourne en ${new:0:8}. Retour arrière possible : pretendo rollback $svc"
+    else
+        echo "Échec du build, du démarrage ou des sondes après la mise à jour de $svc : retour à la version précédente."
+        rollback "$svc"; return 1
+    fi
+}
+
+rollback() {
+    local svc=$1 dir=${REPO[$1]:-}
+    [[ -n $dir && -f .rollback/$svc ]] || die "aucune version précédente enregistrée pour $svc"
+    local old; old=$(cat ".rollback/$svc")
+    echo "Retour de $svc à ${old:0:8}…"
+    checkout_brick "$dir" "$old" && dc build "$svc" && dc_up "$svc"
+    record_brick "$dir" "rollback $svc ${old:0:8}"
+    rm -f ".rollback/$svc"
+    echo "Si la nouvelle version avait migré des données : pretendo restore <sauvegarde 'avant-$svc'>"
+}
+
+# ---------------------------------------------------------------- commandes
+case "${1:-help}" in
+    start)
+        rm -f "$HOLD"
+        wait_network; check_ip
+        nat_apply
+        dc_up --remove-orphans || die "démarrage impossible. Image manquante ? Avec Internet : sudo pretendo rebuild"
+        register_games ;;
+    stop)
+        # « stop » et non « down » : les conteneurs et leurs logs survivent à un redémarrage
+        touch "$HOLD"
+        dc stop ;;
+    service-stop)
+        # arrêt demandé par systemd (extinction, mise à jour de Docker) : pas un arrêt volontaire
+        dc stop ;;
+    restart)
+        if [[ -n ${2:-} ]]; then dc restart "$2" && register_games >/dev/null
+        else hold; dc stop && dc_up && register_games; fi ;;
+    watchdog)
+        watchdog ;;
+    check)
+        check ;;
+    nat-apply)
+        nat_apply ;;
+    nat-ip)
+        if [[ -z ${2:-} ]]; then
+            if [[ -n $(nncs_ip) ]]; then echo "Test NAT local, seconde adresse $(nncs_ip)"; else echo "Test NAT public de Pretendo (Internet requis)"; fi
+        else
+            hold; nat_ip_set "$2"
+        fi ;;
+    probes-quiet)
+        probes >/dev/null ;;
+    status)
+        dc ps -a --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}' ;;
+    logs)
+        shift; dc logs -f --tail=100 "$@" ;;
+    games)
+        for g in $(games); do
+            printf '%-16s %-24s UDP %s/%s  %s\n' "$g" "$(game_get "$g" GAME_NAME)" "$(game_get "$g" GAME_AUTH_PORT)" \
+                "$(game_get "$g" GAME_SECURE_PORT)" "$(git -C "games/$g/src" rev-parse --short=8 HEAD)"
+        done ;;
+    register-games|register-mk8)
+        register_games ;;
+    mii-refresh)
+        # régénère les images de Mii (créées hors ligne = silhouettes génériques) ; Internet requis
+        [[ -f $REPO_DIR/tools/mii-refresh.js ]] || die "tools/mii-refresh.js introuvable dans $REPO_DIR"
+        dc exec -T account node - <"$REPO_DIR/tools/mii-refresh.js" 2>&1 \
+            | grep -vE 'INFO\]|WARN\]|AWS SDK|migrate your code|migration guide|trace-warnings|^[[:space:]]*$' ;;
+    rebuild)
+        hold; dc up -d --build && register_games ;;
+    backup)
+        backup "${2:-}" ;;
+    restore)
+        hold; shift; restore "$@" ;;
+    cert)
+        case "${2:-status}" in
+            status)  cert_status ;;
+            export)  cert_export ;;
+            restore) cert_restore "${3:-}" ;;
+            *) die "usage : pretendo cert [status|export|restore [dossier]]" ;;
+        esac ;;
+    inkay)
+        # recompile Inkay avec le CA actif ; l'envoi FTP demande ftpiiu lancé sur la Wii U
+        cert_export >/dev/null
+        # script fournit le pseudo-terminal exigé par "docker run -it" du script d'upstream
+        TERM=${TERM:-xterm} script -qec ./scripts/compile-custom-inkay.sh /dev/null </dev/null
+        echo "Fichier : $INSTALL_DIR/repos/Inkay/Inkay-pretendo.wps -> SD:/wiiu/environments/aroma/plugins/" ;;
+    boss-keys)
+        case "${2:-status}" in
+            status) boss_status ;;
+            ftp)    boss_ftp && boss_apply ;;
+            apply)  boss_apply ;;
+            *)      for f in "${@:2}"; do
+                        case "$(basename "$f")" in
+                            boss_keys.bin|aes_keys.txt) install -m 600 "$f" "console-files/$(basename "$f")" ;;
+                            *) die "fichier attendu : boss_keys.bin (Wii U) ou aes_keys.txt (3DS)" ;;
+                        esac
+                    done; boss_apply ;;
+        esac ;;
+    versions)
+        versions ;;
+    update)
+        [[ -n ${2:-} ]] || die "usage : pretendo update <brique> [commit|branche]"
+        hold; update_brick "$2" "${3:-}" ;;
+    rollback)
+        [[ -n ${2:-} ]] || die "usage : pretendo rollback <brique>"
+        hold; rollback "$2" ;;
+    upgrade)
+        # met à jour Pretendo LAN lui-même (dépôt GitHub), puis réapplique l'installation
+        [[ -d $REPO_DIR/.git ]] || die "dépôt Pretendo LAN introuvable ($REPO_DIR) : mets-le à jour à la main puis relance install.sh"
+        before=$(git -C "$REPO_DIR" rev-parse HEAD)
+        git -C "$REPO_DIR" pull --ff-only || die "git pull impossible (modifications locales dans $REPO_DIR ?)"
+        hold
+        backup avant-upgrade
+        if ! "$REPO_DIR/install.sh" --yes; then
+            echo "Échec de la mise à jour : retour à ${before:0:8}."
+            git -C "$REPO_DIR" reset -q --hard "$before" && "$REPO_DIR/install.sh" --yes
+            die "version précédente réinstallée. Données : pretendo restore <sauvegarde 'avant-upgrade'> si nécessaire"
+        fi ;;
+    change-ip)
+        hold
+        new="${2:-}"; old=$(server_ip)
+        [[ $new =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "usage : pretendo change-ip NOUVELLE_IP"
+        [[ $new != "$(nncs_ip)" ]] || die "$new est la seconde adresse du test NAT : pretendo nat-ip AUTRE_IP d'abord"
+        sed -i "s/\b${old//./\\.}\b/$new/g" .env secrets.txt environment/*.local.env games/*/runtime.env 2>/dev/null
+        nat_apply
+        dc_up --force-recreate
+        ./scripts/internal/update-account-servers-database.sh
+        register_games
+        echo "IP changée : $old -> $new (à reporter sur les consoles : proxy et DNS)"
+        echo "Les consoles doivent être éteintes puis rallumées : elles gardent sinon l'ancienne adresse du serveur d'amis."
+        if [[ -n $(nncs_ip) ]]; then
+            read -r _d cidr < <(server_addr)
+            [[ -z ${cidr:-} ]] || same_net "$(nncs_ip)" "$cidr" || echo "!!! La seconde adresse $(nncs_ip) n'est plus sur le réseau du serveur : pretendo nat-ip AUTRE_IP"
+        fi ;;
+    doctor)
+        echo "== IP"; check_ip && echo "  IP configurée : $(server_ip) (OK)"
+        if [[ -z $(dc ps -q --status running 2>/dev/null) ]]; then
+            echo; echo "!!! Aucun conteneur ne tourne. Lance : sudo pretendo start"
+            journalctl -u pretendo -n 5 --no-pager 2>/dev/null | cut -c1-160 | sed 's/^/  /'
+            exit 1
+        fi
+        echo; echo "== Conteneurs non démarrés"
+        dc ps -a --format '{{.Service}} {{.State}}' | awk '$2!="running"{print "  "$0; bad=1} END{if(!bad) print "  aucun"}'
+        echo; echo "== Plantages depuis la création des conteneurs"
+        crashed=0
+        for svc in $(dc ps --services); do
+            cid=$(dc ps -q "$svc"); n=$(docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null)
+            if [[ ${n:-0} -gt 0 ]]; then
+                crashed=1
+                echo "  !!! $svc : $n redémarrage(s), dernier à $(docker inspect -f '{{.State.StartedAt}}' "$cid" | cut -c1-19) UTC -> sudo pretendo logs $svc"
+            fi
+        done
+        if [[ $crashed -eq 0 ]]; then echo "  aucun"
+        else echo "  (1 ou 2 redémarrages juste après le démarrage de la machine sont normaux : les services démarrent dans le désordre)"; fi
+        echo; echo "== Sondes (ce que voit une console)"
+        probes
+        echo; echo "== Surveillance automatique"
+        systemctl is-active -q pretendo-watchdog.timer && echo "  active" || echo "  !!! inactive : sudo systemctl enable --now pretendo-watchdog.timer"
+        [[ -e $HOLD ]] && echo "  en pause (arrêt volontaire ou maintenance en cours)"
+        journalctl -u pretendo-watchdog --no-pager -o short --since "7 days ago" 2>/dev/null | grep -E 'relance de|relance :' | tail -5 | cut -c1-130 | sed 's/^/  /'
+        echo; echo "== Ports en écoute"
+        ss -Htlnu | awk '{print $1, $5}' | grep -E ':(53|80|443|8080|8090|8888|60[0-9][0-9])$' | sort -u | sed 's/^/  /' | paste -sd' '
+        echo; echo "== Test NAT"
+        if [[ -n $(nncs_ip) ]]; then
+            hostname -I | grep -qwF "$(nncs_ip)" && echo "  local, seconde adresse $(nncs_ip)" || echo "  !!! seconde adresse $(nncs_ip) absente de la machine (la surveillance la repose)"
+        else
+            echo "  public (Internet requis, erreur 118-0513 possible). Pour le test local : sudo pretendo nat-ip SECONDE_IP"
+        fi
+        echo; echo "== Base de comptes"
+        wait_mongo && echo "  replica set MongoDB primaire : OK"
+        dcx mongodb mongosh --quiet pretendo_account --eval 'print("  PNID : " + db.pnids.countDocuments({}))'
+        for g in $(games); do
+            echo "  $(game_get "$g" GAME_NAME) : $(dcx mongodb mongosh --quiet pretendo_account --eval "print(db.servers.countDocuments({game_server_id:'$(game_get "$g" GAME_SERVER_ID)'}))") entrées serveur (3 attendues)"
+        done
+        echo; echo "== Certificats"; cert_status | sed 's/^/  /'
+        echo; echo "== Clés BOSS"; echo "  $(boss_status)"
+        echo; echo "== Sauvegardes"; ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | head -3 | sed 's/^/  /'
+        echo; echo "== Ressources"
+        df -h / | sed 's/^/  /'
+        free -h | sed 's/^/  /' ;;
+    *)
+        cat <<'USAGE'
+Usage : pretendo <commande>
+
+ Service
+  start | stop | restart [service]   démarrer / arrêter / redémarrer (tout ou un service)
+  status                             état des conteneurs
+  logs [service…]                    suivre les logs (ex : pretendo logs mario-kart-8 friends)
+  doctor                             diagnostic complet
+  check                              sondes : ce que voit une console (attend 2 min, code 1 si échec)
+  games                              serveurs de jeux installés (modules games/)
+  register-games                     ré-enregistre les jeux dans la base de comptes
+  mii-refresh                        régénère les images de Mii depuis Mii Studio (Internet requis)
+  rebuild                            reconstruit les images modifiées et relance
+
+ Données
+  backup [étiquette]                 sauvegarde complète (auto chaque nuit à 05:00)
+  restore <sauvegarde> [--with-config] [--yes]
+                                     restaure les données (+ config/secrets : migration de machine)
+
+ Certificats et clés
+  cert [status|export|restore [dossier]]   CA mitmproxy (compilé dans Inkay) et SSSL
+  inkay                              recompile Inkay et l'envoie à la Wii U (FTP, ftpiiu lancé)
+  boss-keys [status|ftp|fichier…]    clés SpotPass : état, récupération FTP, import
+
+ Mises à jour (Internet requis)
+  versions                           version de chaque brique / mise à jour disponible
+  update <brique> [commit|branche]   met à jour une brique (sauvegarde + retour arrière auto)
+  rollback <brique>                  revient à la version précédente d'une brique
+  upgrade                            met à jour Pretendo LAN lui-même puis réapplique l'installation
+
+ Réseau
+  change-ip <IP>                     bascule toute la configuration sur une nouvelle IP
+  nat-ip [<IP>|off]                  test NAT : seconde adresse du test local, ou retour au test public
+
+Interface web : http://<ip-serveur>:8090 (utilisateur admin, mot de passe dans admin-password.txt)
+Site Pretendo : http://<ip-serveur>:8888 (inscription d'un PNID, compte, Mii)
+USAGE
+        ;;
+esac

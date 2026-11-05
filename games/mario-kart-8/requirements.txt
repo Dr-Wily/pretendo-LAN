@@ -1,0 +1,10 @@
+# Versions figées : combinaison contemporaine du commit b5f9f94 (janvier 2025)
+nintendoclients==3.0.3
+# dépendance de nintendoclients (~=1.1) : 1.2.x exige Python 3.12+
+anynet==1.1.0
+aioconsole==0.8.1
+requests==2.32.3
+pymongo==4.10.1
+redis==5.2.1
+grpcio-tools==1.71.0
+minio==7.2.15

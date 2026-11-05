@@ -1,0 +1,15 @@
+# Rien de généré ni de secret ne doit être versionné (au cas où l'installation
+# serait faite dans le dépôt lui-même)
+games/*/src/
+games/*/runtime.env
+games/*/secrets.env
+games/*/.pinned-by-update
+*.local.env
+secrets.txt
+admin-password.txt
+boss_keys.bin
+aes_keys.txt
+*.pem
+*.der
+*.p12
+__pycache__/

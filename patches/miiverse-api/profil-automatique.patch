@@ -1,0 +1,34 @@
+--- a/src/middleware/auth.ts
++++ b/src/middleware/auth.ts
+@@ -5,6 +5,8 @@
+ import { GetUserDataResponse } from '@pretendonetwork/grpc/account/get_user_data_rpc';
+ import { getEndpoint, getUserSettings } from '@/database';
+ import { getUserAccountData, getValueFromHeaders, decodeParamPack, getPIDFromServiceToken } from '@/util';
++import { Settings } from '@/models/settings';
++import { Content } from '@/models/content';
+ import { HydratedEndpointDocument } from '@/types/mongoose/endpoint';
+ 
+ const ParamPackSchema = z.object({
+@@ -95,12 +97,20 @@
+ 	// eslint-disable-next-line require-atomic-updates
+ 	request.paramPack = paramPackData;
+ 
+-	const userSettings = await getUserSettings(request.pid);
++	let userSettings = await getUserSettings(request.pid);
+ 
+ 	if (!userSettings && request.path === '/v1/endpoint') {
+ 		return next();
+ 	} else if (!userSettings) {
+-		return badAuth(response, 18, 'BAD_PARAM');
++		// Pretendo LAN : le profil n'était créé qu'à la première ouverture de l'application Miiverse,
++		// indisponible en SSSL. Sans lui, un jeu ne peut rien faire (ex. : créer un tournoi dans MK8).
++		const options = { upsert: true, new: true, setDefaultsOnInsert: true };
++		userSettings = await Settings.findOneAndUpdate({ pid }, { $setOnInsert: { pid, screen_name: user?.mii?.name || String(pid) } }, options);
++		await Content.findOneAndUpdate({ pid }, { $setOnInsert: { pid } }, options);
++
++		if (!userSettings) {
++			return badAuth(response, 18, 'BAD_PARAM');
++		}
+ 	}
+ 
+ 	if (moment(userSettings.ban_lift_date) <= moment() && userSettings.account_status !== 3) {
