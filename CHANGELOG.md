@@ -1,5 +1,32 @@
 # Journal des modifications
 
+## 1.7.0 (06/11/2026)
+
+**Testé sur la VM de test les 05 et 06/11/2026** : passage d'une 1.6.0 à la 1.7.0, installation neuve par `install-all.sh` sur une machine vidée (Docker déjà installé), relance sans reconstruction, restauration d'une sauvegarde avec sa configuration (moi) ; 2 Wii U en SSSL (utilisateur) : connexions, inscription en 4 langues, tournois de Mario Kart 8 créés, rejoints et joués par 3 comptes sans le message « nombre de courses terminé ». Non testé : Debian sans Docker préinstallé, questions de l'installateur (lancé avec `--yes`), `pretendo update` d'une brique copiée dans `sources/`, redémarrage de la machine, installation depuis un clone GitHub, 3DS, Wii U avec Inkay. Pas encore déployée sur le serveur de référence.
+
+**Code des serveurs dans le dépôt**
+- Le code de pretendo-docker et de ses 16 sous-modules est copié dans `sources/` (44 Mo), avec ses versions dans `sources/SOURCES.tsv`. L'installation ne clone plus rien depuis GitHub, sauf le serveur Mario Kart 8, faute de licence. Une installation ne dépend plus de la disponibilité de ces dépôts : pretendo-docker est archivé depuis mai 2025.
+- `tools/sources.sh` met ce code à jour depuis les dépôts d'origine (vérifier, mettre à jour une brique, contrôler que les correctifs s'appliquent). `pretendo update` continue de télécharger une brique chez son auteur ; la version choisie est alors gardée par l'installation.
+- Une installation existante passe au code de `sources/` : les briques dont le code diffère sont remplacées, puis les correctifs réappliqués et les images reconstruites.
+- Contenu SpotPass de Nintendo du serveur BOSS (`cdn/content`, `cdn/tasksheet`) retiré : il n'était pas copié dans l'image du serveur.
+- L'image du proxy mitmproxy reste celle construite par l'auteur de pretendo-docker, mais figée par son empreinte (`IMG_MITMPROXY`) au lieu de l'étiquette `:local`. Son code est dans `sources/`, mais elle ne se reconstruit plus : sa base est une Debian 11, dont les dépôts sont archivés.
+
+**Images de base figées**
+- Les images de base des `Dockerfile` (`node:20-alpine`, `golang:1.22-alpine3.20`, `alpine:3.20`, `ubuntu:24.04`, `mitmproxy/mitmproxy:10.4.2`, `devkitppc:20240505`, `python:3.11.18-slim`) sont figées par leur empreinte (`BASE_IMAGES` dans `versions.env`) : une même étiquette désigne une autre image au fil des mois.
+
+**Tournois de Mario Kart 8 : « nombre de courses terminé » dans un tournoi neuf**
+- Miiverse numérotait les communautés en les comptant, et Mario Kart 8 calcule le code d'un tournoi d'après ce numéro. Chaque serveur, ou une base remise à zéro, redonnait donc les mêmes codes. Une console garde l'avancement d'un tournoi sous son code : un compte qui avait joué un tournoi de même code, même sur un autre serveur, ne pouvait pas entrer dans le nouveau. Constaté le 05/11/2026 : tournoi de la VM de test au code d'un tournoi du serveur de référence.
+- Le numéro est maintenant tiré au hasard parmi 400 000, et vérifié libre (`patches/miiverse-api/numero-de-communaute.patch`). Les tournois déjà créés gardent leur code : en cas de doute, les recréer.
+- Dépannage : un tournoi vu « fermé » alors que l'horloge de la console est dans sa plage. La plage s'affiche dans le fuseau du compte, l'horloge reste celle de la console (`docs/06-depannage.md`).
+
+**Cache de construction**
+- Docker ne gardait qu'environ 10 % du disque en cache de construction (2,8 Go sur 28 Go), moins qu'une construction complète : chaque relance de l'installation reconstruisait toutes les images en retéléchargeant leurs dépendances (13 minutes, Internet requis). De plus, l'installation elle-même vidait ce cache à 3 Go en fin de parcours : elle en garde désormais 8, de quoi tout reconstruire sans rien retélécharger (une construction complète en occupe environ 6). Le cache garde désormais au moins 8 Go et au plus 15 Go, en laissant 2 Go libres (`builder.gc` dans `/etc/docker/daemon.json`, Docker 28 ou plus ; un réglage existant est gardé, et l'ancien fichier est remis si Docker refuse le nouveau).
+
+**Deux installateurs**
+- `install-all.sh` : installe les prérequis (Docker et ses plugins, Python 3, git, outils réseau), puis le serveur. Pour une machine neuve.
+- `install-server-only.sh` : installe et active le serveur seul. Il vérifie les prérequis et s'arrête avec la liste de ce qui manque. Il remplace `install.sh`.
+- Les prérequis et leurs versions sont décrits dans `docs/01-installation.md`.
+
 ## 1.6.0 (05/11/2026)
 
 **Testé sur la VM de test le 05/11/2026, 2 Wii U en SSSL (utilisateur)** : titres, textes et boutons personnalisés, 3 et 4 langues dont le russe et le japonais, aucune console figée. Non testé : 3DS. Déployée sur le serveur de référence le 05/11/2026.

@@ -1,0 +1,55 @@
+diff --git i/src/services/nnas/routes/content.ts w/src/services/nnas/routes/content.ts
+index a60cc30..80b0224 100644
+--- i/src/services/nnas/routes/content.ts
++++ w/src/services/nnas/routes/content.ts
+@@ -37,14 +37,14 @@ router.get('/agreements/:type/:region/:version', (request: express.Request, resp
+ 						},
+ 						main_text: {
+ 							'@index': '1',
+-							'#cdata': 'Welcome to Pretendo\'s Christmas public beta! This is supplied with no liability or warranty, and is a stress test of our current services.This test is not expected to last long- term, and the data may be kept for later testing; this data will not be shared outside of Pretendo, and will be deleted at the end of our testing period.'
++							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+ 						},
+ 						sub_title: {
+ 							'#cdata': 'Privacy Policy'
+ 						},
+ 						sub_text: {
+ 							'@index': '1',
+-							'#cdata': 'Welcome to Pretendo\'s Christmas public beta! This is supplied with no liability or warranty, and is a stress test of our current services.This test is not expected to last long- term, and the data may be kept for later testing; this data will not be shared outside of Pretendo, and will be deleted at the end of our testing period.'
++							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+ 						},
+ 					},
+ 					type: 'NINTENDO-NETWORK-EULA',
+@@ -70,14 +70,14 @@ router.get('/agreements/:type/:region/:version', (request: express.Request, resp
+ 						},
+ 						main_text: {
+ 							'@index': '1',
+-							'#cdata': 'Welcome to Pretendo\'s Christmas public beta! This is supplied with no liability or warranty, and is a stress test of our current services.This test is not expected to last long- term, and the data may be kept for later testing; this data will not be shared outside of Pretendo, and will be deleted at the end of our testing period.'
++							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+ 						},
+ 						sub_title: {
+ 							'#cdata': 'Privacy Policy'
+ 						},
+ 						sub_text: {
+ 							'@index': '1',
+-							'#cdata': 'Welcome to Pretendo\'s Christmas public beta! This is supplied with no liability or warranty, and is a stress test of our current services.This test is not expected to last long- term, and the data may be kept for later testing; this data will not be shared outside of Pretendo, and will be deleted at the end of our testing period.'
++							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+ 						},
+ 					},
+ 					type: 'NINTENDO-NETWORK-EULA',
+@@ -103,14 +103,14 @@ router.get('/agreements/:type/:region/:version', (request: express.Request, resp
+ 						},
+ 						main_text: {
+ 							'@index': '1',
+-							'#cdata': 'Welcome to Pretendo\'s Christmas public beta! This is supplied with no liability or warranty, and is a stress test of our current services.This test is not expected to last long- term, and the data may be kept for later testing; this data will not be shared outside of Pretendo, and will be deleted at the end of our testing period.'
++							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+ 						},
+ 						sub_title: {
+ 							'#cdata': 'Privacy Policy'
+ 						},
+ 						sub_text: {
+ 							'@index': '1',
+-							'#cdata': 'Welcome to Pretendo\'s Christmas public beta! This is supplied with no liability or warranty, and is a stress test of our current services.This test is not expected to last long- term, and the data may be kept for later testing; this data will not be shared outside of Pretendo, and will be deleted at the end of our testing period.'
++							'#cdata': 'Welcome to your selfhosted Pretendo server! Have fun! :)'
+ 						},
+ 					},
+ 					type: 'NINTENDO-NETWORK-EULA',

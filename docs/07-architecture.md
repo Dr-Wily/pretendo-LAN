@@ -45,7 +45,10 @@ Le portail règle le premier point, et le correctif `patches/account/mii-offline
 
 ```
 /opt/pretendo-lan/           ce dépôt (scripts, outils, modules, docs)
-├── install.sh               installateur ré-exécutable
+├── install-all.sh           installation complète : prérequis, puis install-server-only.sh
+├── install-server-only.sh   installation du serveur seul, ré-exécutable
+├── sources/                 code des serveurs : pretendo-docker et ses sous-modules (SOURCES.tsv)
+├── tools/sources.sh         mise à jour de sources/ depuis les dépôts d'origine (mainteneur)
 ├── versions.env             TOUTES les versions figées
 ├── tools/pretendo           commande d'administration  -> /usr/local/bin/pretendo
 ├── tools/pretendo-admin.py  interface web               -> /usr/local/bin/pretendo-admin
@@ -55,7 +58,7 @@ Le portail règle le premier point, et le correctif `patches/account/mii-offline
 ├── patches/<sous-module>/   correctifs Pretendo LAN, appliqués après ceux d'upstream
 └── games/<jeu>/             modules de serveurs de jeux
 
-/opt/pretendo/               installation (clone figé de pretendo-docker)
+/opt/pretendo/               installation : copie de sources/, chaque brique en dépôt git local
 ├── compose.yml              upstream, jamais modifié
 ├── compose.override.yml     GÉNÉRÉ : versions, DNS, SSSL, jeux
 ├── repos/                   sous-modules upstream (account, friends, Inkay…)
@@ -69,7 +72,7 @@ Le portail règle le premier point, et le correctif `patches/account/mii-offline
 /etc/pretendo-lan.conf       emplacements (INSTALL_DIR, REPO_DIR)
 ```
 
-**Principe** : upstream n'est jamais modifié à la main. Tout ce qui est propre à Pretendo LAN vit dans `compose.override.yml`, que Docker Compose fusionne automatiquement avec `compose.yml`, et dans des dossiers que les scripts d'upstream ne touchent pas.
+**Principe** : upstream n'est jamais modifié à la main. Seules deux retouches sont faites dans `sources/`, automatiquement par `tools/sources.sh` : les images de base des `Dockerfile` sont figées par leur empreinte, et le contenu SpotPass de Nintendo du serveur BOSS est retiré. Tout ce qui est propre à Pretendo LAN vit dans `compose.override.yml`, que Docker Compose fusionne automatiquement avec `compose.yml`, et dans des dossiers que les scripts d'upstream ne touchent pas.
 
 ## Pourquoi les installations pretendo-docker devenaient instables
 
@@ -88,6 +91,10 @@ Ces causes ont toutes été observées sur une vraie installation et corrigées 
 | Logs Docker illimités | Disque plein, MongoDB s'arrête | Rotation des logs |
 | Mise en veille de l'hôte | Serveur injoignable | Veille désactivée |
 | Certificat mitmproxy présent dans un seul volume | Volume perdu, Inkay invalide | Copie sur l'hôte et sauvegardes |
+| Code récupéré sur GitHub à chaque installation | Un dépôt indisponible, archivé ou modifié, ou un incident réseau, et l'installation échoue (pretendo-docker est archivé depuis mai 2025) | Code des serveurs copié dans `sources/` |
+| Images de base en étiquette mobile (`node:20-alpine`) | La même étiquette désigne une autre image au fil des mois | Empreinte ajoutée par `tools/sources.sh` (`BASE_IMAGES`) |
+| Image mitmproxy désignée par l'étiquette `:local` (ghcr.io/matthewl246) | L'auteur peut la remplacer à tout moment ; sa reconstruction échoue (base Debian 11, dépôts archivés) | Figée par son empreinte (`IMG_MITMPROXY`) ; son code est dans `sources/` |
+| Cache de construction limité à 10 % du disque par Docker | Chaque relance de l'installation reconstruisait tout, en retéléchargeant les dépendances | Cache de 8 à 15 Go (`builder.gc` dans `daemon.json`) |
 | `update.sh` d'upstream | Tout avance en même temps vers des versions non testées | Mises à jour brique par brique, avec retour arrière automatique |
 | Images de Mii téléchargées chez Nintendo (Mii Studio) | Sans Internet, la création de PNID échoue ; sur PC, images cassées | Image de repli (correctif `account`), `mii-refresh`, portail `/cdn/` |
 | Course au démarrage du serveur d'amis (upstream) | Plantage un démarrage sur deux. Sous Delve, le programme reste **en pause** : conteneur « running », Docker ne relance rien, et **tous les jeux en ligne échouent (101-0502)** | `patches/friends/fix-auth-startup-race.patch` (0 plantage sur 8 redémarrages contre 4 sur 8) ; serveurs Go lancés sans Delve (`command: ["./server"]`) pour qu'un plantage soit relancé par Docker ; détection dans `doctor` |

@@ -7,12 +7,17 @@
 | Système | Debian 13 « trixie », installation minimale | idem, sans environnement graphique |
 | Processeur | 64 bits : x86-64 **avec AVX** (exigé par MongoDB 5+) ou ARM64 | 4 cœurs |
 | Mémoire | 4 Go (pour construire les images) | 8 Go |
-| Disque | 25 Go libres pendant l'installation (15 Go ensuite) | SSD |
+| Disque | 25 Go libres pendant l'installation ; ensuite 10 Go d'images, plus 8 à 15 Go de cache de construction | 40 Go, SSD |
 | Réseau | Câble Ethernet, même réseau local que les consoles | IP fixe |
 
 Pour vérifier la présence d'AVX sur un processeur x86 : `grep -c avx /proc/cpuinfo` doit afficher un nombre supérieur à 0.
 
-L'installation demande Internet (téléchargement du code et des images Docker), mais **plus ensuite** : le serveur fonctionne entièrement en local.
+L'installation demande Internet, mais **plus ensuite** : le serveur fonctionne entièrement en local. **Le code des serveurs Pretendo est dans ce dépôt** (`sources/`) : rien n'est cloné depuis GitHub, sauf le serveur Mario Kart 8, dont le code n'a pas de licence permettant de le redistribuer. Restent téléchargés pendant l'installation, comme Docker lui-même :
+- les images Docker de base (MongoDB, PostgreSQL, Node.js, Go, Python…), depuis Docker Hub et ghcr.io, à des versions figées ;
+- les paquets npm, Go et Python, et les paquets système des images, pendant leur construction, aux versions figées par chaque composant ;
+- le code source d'OpenSSL et de nginx, pour le proxy et le HTTPS des Wii U non modifiées ;
+- le certificat « Nintendo CA - G3 », auprès de Nintendo, pour le SSSL ;
+- le code du serveur Mario Kart 8, depuis GitHub, au commit figé dans `games/mario-kart-8/game.conf`.
 
 ## Étape 1 : fixer l'IP du serveur
 
@@ -29,12 +34,36 @@ ip -br addr
 
 ## Étape 2 : installer
 
+Deux installateurs, au choix :
+
+| Script | Pour qui | Ce qu'il fait |
+|---|---|---|
+| **`install-all.sh`** | une machine Debian 13 neuve ; conseillé si tu débutes | installe les prérequis (Docker et ses plugins, Python 3, git, outils réseau), puis le serveur |
+| **`install-server-only.sh`** | les prérequis sont déjà installés (voir le tableau ci-dessous) | installe et active le serveur seul ; s'il manque un prérequis, il s'arrête et dit lequel |
+
 ```bash
 sudo apt install -y git
 git clone https://github.com/Dr-Wily/pretendo-LAN.git /opt/pretendo-lan
 cd /opt/pretendo-lan
-sudo ./install.sh
+sudo ./install-all.sh            # ou : sudo ./install-server-only.sh
 ```
+
+### Prérequis d'install-server-only.sh
+
+`install-all.sh` les installe lui-même. Go et Node.js ne sont **pas** nécessaires sur la machine : ils tournent dans les conteneurs, aux versions figées par les `Dockerfile`.
+
+| Logiciel | Version | Paquet Debian |
+|---|---|---|
+| Docker Engine | testé avec 29.9 | `docker-ce`, depuis le [dépôt officiel de Docker](https://docs.docker.com/engine/install/debian/) |
+| Docker Compose | **2 ou plus** (testé avec 5.6) | `docker-compose-plugin` |
+| Docker Buildx | testé avec la version du dépôt de Docker | `docker-buildx-plugin` |
+| Python | **3.11 ou plus** (testé avec 3.13) | `python3` |
+| git, curl, jq, openssl, tar | celles de Debian 13 | `git`, `curl`, `jq`, `openssl`, `tar` |
+| ip, ss | celle de Debian 13 | `iproute2` |
+| conntrack (onglet *Connexions*) | celle de Debian 13 | `conntrack` |
+| xxd, script, arping, ftp | celles de Debian 13 | `xxd`, `bsdutils`, `iputils-arping`, `tnftp` |
+
+Le service Docker doit tourner (`sudo systemctl enable --now docker`).
 
 L'installateur pose ces questions (Entrée = valeur proposée) :
 
@@ -52,10 +81,10 @@ Il affiche ensuite un récapitulatif et demande confirmation.
 Sans aucune question (valeurs détectées ou par défaut) :
 
 ```bash
-sudo ./install.sh --yes --server-ip 192.168.0.165 --wiiu-ip 192.168.0.97 --nat-ip 192.168.0.166
+sudo ./install-all.sh --yes --server-ip 192.168.0.165 --wiiu-ip 192.168.0.97 --nat-ip 192.168.0.166
 ```
 
-Options : `--dir`, `--no-sssl`, `--nat-ip`, `--reconfigure` (voir `./install.sh --help`).
+Options : `--dir`, `--no-sssl`, `--nat-ip`, `--reconfigure` (voir `./install-server-only.sh --help`). `install-all.sh` accepte les mêmes..
 
 ### Seconde IP du test NAT
 
@@ -70,8 +99,8 @@ L'adresse est vérifiée avant d'être utilisée : une adresse occupée ou sur u
 ### Ce que fait l'installateur
 
 1. **Vérifie la machine** : Debian, architecture, AVX, mémoire, ports libres (53, 80, 443, 8080, 8090, 8888).
-2. **Installe les paquets et Docker** depuis le dépôt officiel de Docker. Il active la rotation des logs Docker et désactive la mise en veille.
-3. **Clone pretendo-docker** à la version figée dans `versions.env`, avec ses sous-modules (comptes, amis, Juxtaposition, BOSS, jeux…).
+2. **Installe les prérequis**, avec `install-all.sh` seulement : paquets Debian, et Docker depuis son dépôt officiel. `install-server-only.sh` vérifie qu'ils sont là. Les deux activent la rotation des logs Docker et désactivent la mise en veille.
+3. **Copie le code des serveurs depuis `sources/`** : la base pretendo-docker et ses sous-modules (comptes, amis, Juxtaposition, BOSS, mitmproxy, jeux…), sans rien télécharger. Chaque brique devient un dépôt git local, ce que demandent les scripts d'upstream.
 4. **Prépare les modules de jeux** de `games/`, aujourd'hui Mario Kart 8.
 5. **Génère le certificat SSSL** : il récupère le « Nintendo CA - G3 » auprès de `account.nintendo.net`, vérifie son empreinte, puis le modifie avec l'outil SSSL de Pretendo.
 6. **Écrit `compose.override.yml`** : versions figées, DNS des consoles, SSSL et jeux.
@@ -81,7 +110,7 @@ L'adresse est vérifiée avant d'être utilisée : une adresse occupée ou sur u
 
 ### Ré-exécuter l'installateur
 
-`sudo ./install.sh --yes` peut être relancé à tout moment : après un `git pull`, après une modification de `versions.env`, ou pour réparer. Il **conserve** la configuration, les secrets et les données. Seul `--reconfigure` régénère les secrets, et les PNID existants risquent alors de ne plus fonctionner.
+`sudo ./install-server-only.sh --yes` peut être relancé à tout moment : après un `git pull`, après une modification de `versions.env`, ou pour réparer. Si `sources/` a changé, il remplace le code des briques concernées, réapplique les correctifs et reconstruit leurs images. Il **conserve** la configuration, les secrets et les données. Seul `--reconfigure` régénère les secrets, et les PNID existants risquent alors de ne plus fonctionner.
 
 ## Étape 3 : vérifier
 

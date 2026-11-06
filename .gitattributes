@@ -8,3 +8,5 @@ tools/pretendo text eol=lf
 *.env text eol=lf
 # Les correctifs doivent rester octet pour octet (certains fichiers d'upstream sont en CRLF)
 *.patch -text
+# Code des serveurs : copie exacte des dépôts d'origine, octet pour octet
+sources/** -text

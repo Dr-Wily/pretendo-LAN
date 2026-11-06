@@ -13,3 +13,5 @@ aes_keys.txt
 *.der
 *.p12
 __pycache__/
+# Le code des serveurs est versionné tel quel (certificats d'Inkay, de mitmproxy…)
+!/sources/**

@@ -7,6 +7,7 @@ Le projet s'appuie sur [MatthewL246/pretendo-docker](https://github.com/MatthewL
 | | |
 |---|---|
 | 🏁 **Mario Kart 8** | Serveur Python [Newtendo](https://github.com/Newtendo-Network/nex_mario_kart_8), celui qu'utilise Pretendo, intégré et configuré |
+| 📦 **Autonome** | Code des serveurs dans le dépôt, images de base figées par leur empreinte |
 | 🔒 **Stabilité** | Images et dépendances figées, sous-réseaux Docker fixés, rotation des logs, plafond mémoire pour mitmproxy, pas de mise en veille |
 | 📶 **Hors ligne** | DNS local pour les consoles, test de connexion de la Wii U et liens des mails servis en local. La création de PNID est prévue pour fonctionner sans Internet (images de Mii de repli). Le test NAT passe par les serveurs publics de Pretendo : son effet sur les parties entre consoles sans Internet reste à vérifier avec cette version |
 | 🌐 **Site web** | Inscription d'un PNID, compte et Mii depuis un PC, sur `http://IP:8888`, sans réglage sur le PC |
@@ -26,10 +27,12 @@ Le projet s'appuie sur [MatthewL246/pretendo-docker](https://github.com/MatthewL
 sudo apt install -y git
 git clone https://github.com/Dr-Wily/pretendo-LAN.git /opt/pretendo-lan
 cd /opt/pretendo-lan
-sudo ./install.sh
+sudo ./install-all.sh
 ```
 
-L'installateur pose quelques questions : IP du serveur, IP d'une Wii U (facultatif) et activation de SSSL. Il installe ensuite Docker et tout le reste. Compte **20 à 60 minutes** la première fois.
+L'installateur pose quelques questions : IP du serveur, IP d'une Wii U (facultatif) et activation de SSSL. `install-all.sh` installe ensuite Docker et les autres prérequis, puis le serveur. Si Docker et les prérequis sont déjà installés, `sudo ./install-server-only.sh` installe le serveur seul (prérequis : [docs/01-installation.md](docs/01-installation.md#prérequis-dinstall-server-onlysh)). Compte **20 à 60 minutes** la première fois.
+
+Le code des serveurs Pretendo est dans ce dépôt (`sources/`, voir [sources/README.md](sources/README.md)) : l'installation ne dépend pas de la disponibilité de leurs dépôts GitHub.
 
 Il reste ensuite à :
 1. ouvrir l'interface d'admin sur **http://IP-du-serveur:8090** (utilisateur `admin`, mot de passe : `sudo cat /opt/pretendo/admin-password.txt`) ;

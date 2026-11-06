@@ -81,7 +81,7 @@ Deux certificats existent, à ne pas confondre :
 | Sert à | Wii U avec Inkay (méthode A) | Wii U non modifiées (méthode B) |
 | Où | volume Docker de mitmproxy, copie dans `/opt/pretendo/certs` | `/opt/pretendo/console-files/cert-chain.pem` |
 | Validité | 10 ans à partir de l'installation | 10 ans à partir de l'installation |
-| S'il est perdu | les Wii U Inkay ne se connectent plus : `sudo pretendo cert restore`, sinon `sudo pretendo inkay` puis recopie du plugin | régénéré en relançant `sudo ./install.sh --yes` ; rien à refaire sur les consoles |
+| S'il est perdu | les Wii U Inkay ne se connectent plus : `sudo pretendo cert restore`, sinon `sudo pretendo inkay` puis recopie du plugin | régénéré en relançant `sudo ./install-server-only.sh --yes` ; rien à refaire sur les consoles |
 
 Les deux sont inclus dans chaque sauvegarde.
 

@@ -1,0 +1,63 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start Docker Compose",
+            "type": "shell",
+            "command": "docker compose up -d --build --pull always",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Start docs server",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/docs"
+            },
+            "command": "npm install && npm start",
+            "problemMatcher": []
+        },
+        {
+            "label": "Build account",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/repos/account"
+            },
+            "command": "npm install && npm run build"
+        },
+        {
+            "label": "Build website",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/repos/website"
+            },
+            "command": "npm install && npm run build"
+        },
+        {
+            "label": "Build miiverse-api",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/repos/miiverse-api"
+            },
+            "command": "npm install && npm run build"
+        },
+        {
+            "label": "Build juxtaposition-ui",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/repos/juxtaposition-ui"
+            },
+            "command": "npm install"
+        },
+        {
+            "label": "Build BOSS",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/repos/BOSS"
+            },
+            "command": "npm install && npm run build"
+        }
+    ]
+}

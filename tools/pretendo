@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pretendo : administration du serveur Pretendo LAN (installée par install.sh)
+# pretendo : administration du serveur Pretendo LAN (installée par install-server-only.sh)
 set -uo pipefail
 
 conf() { grep -E "^$1=" /etc/pretendo-lan.conf 2>/dev/null | cut -d= -f2-; }
@@ -41,6 +41,16 @@ repo_branch() {
     if [[ $dir == games/*/src ]]; then game_get "$(basename "$(dirname "$dir")")" GAME_BRANCH; return; fi
     b=$(git config -f .gitmodules "submodule.$dir.branch" 2>/dev/null)
     echo "${b:-$(git -C "$dir" remote show origin 2>/dev/null | awk '/HEAD branch/{print $NF}')}"
+}
+# version d'une brique : celle de sources/ du dépôt (commit d'origine), sauf si 'pretendo update'
+# en a choisi une autre (.pretendo-lan-pinned) : c'est alors le commit de l'auteur, extrait
+src_commit() {
+    local dir=$1 c
+    if [[ $dir == repos/* ]] && ! grep -qxF "$dir" .pretendo-lan-pinned 2>/dev/null; then
+        c=$(awk -F'\t' -v p="$dir" '$1 == p {print $3}' "$REPO_DIR/sources/SOURCES.tsv" 2>/dev/null)
+        [[ -n $c ]] && { echo "${c:0:8}"; return; }
+    fi
+    git -C "$dir" rev-parse --short=8 HEAD
 }
 patch_dir() { # correctifs à réappliquer après un changement de version
     local dir=$1
@@ -144,7 +154,7 @@ nat_apply() { # DNS des consoles selon le test NAT choisi ; prend effet au proch
     local src=config/public.Corefile
     [[ -n $(nncs_ip) ]] && src=config/public-nat-local.Corefile
     nat_ip_up
-    [[ -f $src ]] || die "$src introuvable : relance install.sh"
+    [[ -f $src ]] || die "$src introuvable : relance install-server-only.sh"
     cmp -s "$src" config/public-lan.Corefile && return 0
     cat "$src" >config/public-lan.Corefile
     [[ -n $(dc ps -q --status running coredns-public 2>/dev/null) ]] && dc restart coredns-public >/dev/null 2>&1
@@ -415,7 +425,7 @@ boss_apply() {
 
 boss_ftp() { # récupère SD:/boss_keys.bin sur la Wii U (ftpiiu lancé)
     local ip; ip=$(grep -E '^WIIU_IP=' .env | cut -d= -f2-)
-    [[ -n $ip ]] || die "WIIU_IP absent de $INSTALL_DIR/.env (sudo ./install.sh --wiiu-ip IP)"
+    [[ -n $ip ]] || die "WIIU_IP absent de $INSTALL_DIR/.env (sudo ./install-server-only.sh --wiiu-ip IP)"
     mkdir -p console-files
     timeout 30 tnftp -o console-files/boss_keys.bin.tmp "ftp://user:pass@$ip/fs/vol/external01/boss_keys.bin" </dev/null >/dev/null 2>&1 \
         || { rm -f console-files/boss_keys.bin.tmp; die "FTP vers $ip impossible (ftpiiu lancé ? boss_keys.bin à la racine de la SD ?)"; }
@@ -496,7 +506,7 @@ versions() {
     printf '%-26s %-10s %-12s %s\n' BRIQUE ACTUEL DISPONIBLE BRANCHE
     for svc in $(printf '%s\n' "${!REPO[@]}" | sort); do
         local dir=${REPO[$svc]} br cur rem
-        br=$(repo_branch "$dir"); cur=$(git -C "$dir" rev-parse --short=8 HEAD)
+        br=$(repo_branch "$dir"); cur=$(src_commit "$dir")
         rem=$(timeout 15 git -C "$dir" ls-remote origin "refs/heads/$br" 2>/dev/null | cut -c1-8)
         [[ -z $rem ]] && rem="(hors ligne)"
         [[ $rem == "$cur" ]] && rem="à jour"
@@ -534,8 +544,10 @@ record_brick() { # mémorise la version choisie (sous-module upstream ou module 
     local dir=$1 msg=$2
     if [[ $dir == repos/* ]]; then
         git add "$dir" && git -c user.name=pretendo -c user.email=pretendo@localhost commit -qm "$msg" 2>/dev/null
+        # install-server-only.sh ne remplacera pas cette brique par la version de sources/
+        grep -qxF "$dir" .pretendo-lan-pinned 2>/dev/null || echo "$dir" >>.pretendo-lan-pinned
     else
-        touch "$(dirname "$dir")/.pinned-by-update"   # install.sh ne reviendra pas au commit de game.conf
+        touch "$(dirname "$dir")/.pinned-by-update"   # install-server-only.sh ne reviendra pas au commit de game.conf
     fi
 }
 
@@ -570,6 +582,8 @@ rollback() {
     checkout_brick "$dir" "$old" && dc build "$svc" && dc_up "$svc"
     record_brick "$dir" "rollback $svc ${old:0:8}"
     rm -f ".rollback/$svc"
+    # retour à la version d'avant : en général celle de sources/, que l'installation peut de nouveau suivre
+    [[ -f .pretendo-lan-pinned ]] && sed -i "\#^${dir}\$#d" .pretendo-lan-pinned
     echo "Si la nouvelle version avait migré des données : pretendo restore <sauvegarde 'avant-$svc'>"
 }
 
@@ -662,14 +676,14 @@ case "${1:-help}" in
         hold; rollback "$2" ;;
     upgrade)
         # met à jour Pretendo LAN lui-même (dépôt GitHub), puis réapplique l'installation
-        [[ -d $REPO_DIR/.git ]] || die "dépôt Pretendo LAN introuvable ($REPO_DIR) : mets-le à jour à la main puis relance install.sh"
+        [[ -d $REPO_DIR/.git ]] || die "dépôt Pretendo LAN introuvable ($REPO_DIR) : mets-le à jour à la main puis relance install-server-only.sh"
         before=$(git -C "$REPO_DIR" rev-parse HEAD)
         git -C "$REPO_DIR" pull --ff-only || die "git pull impossible (modifications locales dans $REPO_DIR ?)"
         hold
         backup avant-upgrade
-        if ! "$REPO_DIR/install.sh" --yes; then
+        if ! "$REPO_DIR/install-server-only.sh" --yes; then
             echo "Échec de la mise à jour : retour à ${before:0:8}."
-            git -C "$REPO_DIR" reset -q --hard "$before" && "$REPO_DIR/install.sh" --yes
+            git -C "$REPO_DIR" reset -q --hard "$before" && "$REPO_DIR/install-server-only.sh" --yes
             die "version précédente réinstallée. Données : pretendo restore <sauvegarde 'avant-upgrade'> si nécessaire"
         fi ;;
     change-ip)

@@ -99,7 +99,7 @@ services:
 
 1. Crée le dossier `games/<jeu>/` dans ce dépôt.
 2. Ajoute son nom à `GAMES=` dans `versions.env` : `GAMES="mario-kart-8 smash-wiiu"`.
-3. Lance `sudo ./install.sh --yes`. Il :
+3. Lance `sudo ./install-server-only.sh --yes`. Il :
    - clone le jeu à `GAME_COMMIT` ;
    - génère `runtime.env` et les secrets ;
    - ajoute le service, le construit et le démarre ;

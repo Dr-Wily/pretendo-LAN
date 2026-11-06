@@ -1,0 +1,27 @@
+# Send NNCS requests to Pretendo's servers because NNCS requires multiple servers with different public IP addresses,
+# which most people don't have.
+. {
+	log
+	errors
+	view nncs {
+		expr name() matches 'nncs.\\.app\\..*'
+	}
+	rewrite name regex (.*\.)?nintendo(wifi)?\.net {1}pretendo.cc answer auto
+	forward . /etc/resolv.conf
+}
+
+# Redirect all Pretendo/Nintendo requests to a local server
+. {
+    log
+	errors
+    rewrite name regex (.*\.)?nintendo\.net server.local answer auto
+    rewrite name regex (.*\.)?nintendowifi\.net server.local answer auto
+    rewrite name regex (.*\.)?pretendo\.cc server.local answer auto
+    rewrite name regex (.*\.)?pretendo\.network server.local answer auto
+    rewrite name regex (.*\.)?pretendo-cdn\.b-cdn\.net server.local answer auto
+    hosts {
+        {$SERVER_IP} server.local
+        fallthrough
+    }
+    forward . /etc/resolv.conf
+}

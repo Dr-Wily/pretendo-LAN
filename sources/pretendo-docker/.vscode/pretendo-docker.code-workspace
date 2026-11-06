@@ -1,0 +1,59 @@
+{
+    "folders": [
+        {
+            "path": ".."
+        },
+        {
+            "path": "../docs"
+        },
+        {
+            "path": "../repos/account"
+        },
+        {
+            "path": "../repos/BOSS"
+        },
+        {
+            "path": "../repos/friends"
+        },
+        {
+            "path": "../repos/Inkay"
+        },
+        {
+            "path": "../repos/juxtaposition-ui"
+        },
+        {
+            "path": "../repos/miiverse-api"
+        },
+        {
+            "path": "../repos/minecraft-wiiu"
+        },
+        {
+            "path": "../repos/mitmproxy-pretendo"
+        },
+        {
+            "path": "../repos/pikmin-3"
+        },
+        {
+            "path": "../repos/splatoon"
+        },
+        {
+            "path": "../repos/SSSL"
+        },
+        {
+            "path": "../repos/SSSL-DNS"
+        },
+        {
+            "path": "../repos/super-mario-maker"
+        },
+        {
+            "path": "../repos/website"
+        },
+        {
+            "path": "../repos/wiiu-chat-authentication"
+        },
+        {
+            "path": "../repos/wiiu-chat-secure"
+        }
+    ],
+    "settings": {}
+}

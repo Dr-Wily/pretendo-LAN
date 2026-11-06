@@ -1,0 +1,24 @@
+--- a/src/services/api/routes/communities.ts
++++ b/src/services/api/routes/communities.ts
+@@ -1,3 +1,4 @@
++import crypto from 'node:crypto';
+ import express from 'express';
+ import xmlbuilder from 'xmlbuilder';
+ import multer from 'multer';
+@@ -330,8 +331,14 @@
+ 		return respondCommunityError(response, 401, 912);
+ 	}
+ 
+-	const communitiesCount = await Community.count();
+-	const communityID = (parseInt(parentCommunity.community_id) + (5000 * communitiesCount)); // Change this to auto increment
++	// * Pretendo LAN : numéro tiré au hasard, et libre. Upstream comptait les communautés : chaque serveur, ou une
++	// * base remise à zéro, redonnait les mêmes numéros, donc les mêmes codes de tournoi (MK8 calcule le code
++	// * d'après ce numéro). Une console garde l'avancement d'un tournoi sous son code : elle annonçait alors
++	// * "nombre de courses terminé" dans un tournoi neuf.
++	let communityID = 0;
++	do {
++		communityID = parseInt(parentCommunity.community_id) + (5000 * (1 + crypto.randomInt(400000)));
++	} while (await Community.exists({ community_id: communityID.toString() }));
+ 	const community = await Community.create({
+ 		platform_id: 0, // WiiU
+ 		name: request.body.name,

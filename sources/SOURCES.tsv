@@ -1,0 +1,19 @@
+# Code des serveurs copié dans sources/pretendo-docker (voir sources/README.md). Mis à jour par tools/sources.sh.
+# chemin	dépôt d'origine	commit	branche suivie (- : branche par défaut)
+.	https://github.com/MatthewL246/pretendo-docker.git	aff4419299ed2c63b2f4c00f5203771034ea6bed	-
+repos/account	https://github.com/PretendoNetwork/account.git	19187019799fb3ed606b3afd3ba6e2ed1a9239d0	dev
+repos/BOSS	https://github.com/PretendoNetwork/BOSS	8d2bed98a3065f5d97f6efd33df8cc66957d5bfa	master
+repos/friends	https://github.com/PretendoNetwork/friends.git	3377ef25ea68fbb16d728d4b77b6862c76d9bbfa	nex-go-rewrite
+repos/Inkay	https://github.com/PretendoNetwork/Inkay.git	a1375ca6088f264df4309a70305603fc4554a227	main
+repos/juxtaposition-ui	https://github.com/PretendoNetwork/juxtaposition-ui.git	6009dfde0959532192e25de525e3a465d253fc22	dev
+repos/miiverse-api	https://github.com/PretendoNetwork/miiverse-api.git	28ef808178aaf402befad28e88b6a288af7aa5d4	dev
+repos/minecraft-wiiu	https://github.com/PretendoNetwork/minecraft-wiiu	8a30e4728126a5b3d9fafa440eb6b04e658f7f16	main
+repos/mitmproxy-pretendo	https://github.com/MatthewL246/mitmproxy-pretendo.git	c03c3a0ff7801fb0260057c5967e77fc0085715c	master
+repos/pikmin-3	https://github.com/PretendoNetwork/pikmin-3	f6e70f397b42bde9512efa1e1d15751e3a8e7c34	master
+repos/splatoon	https://github.com/PretendoNetwork/splatoon	8e52c6714cf654a68ad23df1caa707c77a559413	master
+repos/SSSL-DNS	https://github.com/PretendoNetwork/SSSL-DNS.git	f72e4bce6fc55734a22d14da06699c75d1b6fd88	master
+repos/SSSL	https://github.com/PretendoNetwork/SSSL.git	61af9abb34798c68141ed19726db0cf21bd1f74a	master
+repos/super-mario-maker	https://github.com/PretendoNetwork/super-mario-maker.git	b9df34c07839ae6dcdf499fcb98bbc882433a2a5	master
+repos/website	https://github.com/PretendoNetwork/website.git	81bf66ff895fc0fb9edf16a9a4be6230a1b58765	dev
+repos/wiiu-chat-authentication	https://github.com/PretendoNetwork/wiiu-chat-authentication.git	09abdbd2d2bb46de05a9e28c64c3ca25eaccfde0	master
+repos/wiiu-chat-secure	https://github.com/PretendoNetwork/wiiu-chat-secure.git	d30c0b2e5502b1193f58084d64a6800a3a9d319c	master

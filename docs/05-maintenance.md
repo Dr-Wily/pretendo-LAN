@@ -49,7 +49,7 @@ sudo pretendo restore 20261029-050000-auto --with-config  # données + configura
 ## Migrer vers une autre machine
 
 1. Sur l'ancienne machine : `sudo pretendo backup migration`, puis copie le dossier sur la nouvelle machine.
-2. Sur la nouvelle machine : installe Pretendo LAN normalement (`sudo ./install.sh`).
+2. Sur la nouvelle machine : installe Pretendo LAN normalement (`sudo ./install-all.sh`).
 3. Restaure, configuration comprise :
 
    ```bash
@@ -70,7 +70,7 @@ Les mises à jour demandent Internet. Il y a **trois niveaux**, du plus courant 
 sudo pretendo upgrade
 ```
 
-Cette commande fait un `git pull` de ce dépôt, une sauvegarde, puis relance `install.sh --yes`. La configuration et les données sont conservées. Si l'installation échoue, la version précédente est réinstallée automatiquement.
+Cette commande fait un `git pull` de ce dépôt, une sauvegarde, puis relance `install-server-only.sh --yes`. La configuration et les données sont conservées. Si l'installation échoue, la version précédente est réinstallée automatiquement.
 
 ### 2. Une brique (serveur de comptes, d'amis, un jeu…)
 
@@ -90,6 +90,8 @@ sudo pretendo rollback splatoon           # revenir à la version précédente
 
 En cas d'échec, il **revient tout seul** à la version précédente.
 
+`update` télécharge la brique chez son auteur, sur GitHub. La version choisie est ensuite **gardée** : `install-server-only.sh` ne la remplace plus par celle de `sources/`. `rollback` rend la brique à l'installation, qui la ramène à la version de `sources/` à la prochaine exécution.
+
 > ⚠️ **Les versions installées par défaut sont celles qui ont été testées.** Tu n'as pas besoin de mettre à jour les briques pour que le serveur fonctionne. Les sondes ne remplacent pas un essai sur console : elles ne vérifient ni la connexion à un jeu, ni une partie en ligne.
 
 Résultat d'un essai vers la dernière version de chaque brique, le 30/10/2026 :
@@ -107,12 +109,25 @@ Conseils :
 - **`account` en dernier et seul** : son API gRPC est utilisée par tous les serveurs de jeux.
 - Si une mise à jour a migré des données et que tu reviens en arrière, restaure aussi la sauvegarde `avant-<brique>`.
 
-### 3. Les images de base (MongoDB, PostgreSQL, MinIO, nginx…)
+### 3. Le code des serveurs du dépôt (`sources/`), pour qui maintient le dépôt
+
+Le code de pretendo-docker et de ses sous-modules est copié dans `sources/`, avec ses versions dans `sources/SOURCES.tsv`. Pour le faire avancer depuis les dépôts d'origine :
+
+```bash
+tools/sources.sh verifier                  # versions disponibles chez les auteurs
+tools/sources.sh maj splatoon              # dernière version de la branche suivie
+tools/sources.sh maj account 1a2b3c4…      # un commit précis (40 caractères)
+tools/sources.sh controler                 # les correctifs s'appliquent-ils encore ?
+```
+
+Puis tester une installation, et commiter `sources/` avec `git add -f sources` (certains fichiers d'upstream sont suivis malgré son `.gitignore`). Les installations les reçoivent par `sudo pretendo upgrade`.
+
+### 4. Les images de base (MongoDB, PostgreSQL, MinIO, nginx…)
 
 Elles sont figées dans **`versions.env`**. Pour en changer une :
 
 1. Modifie la ligne `IMG_…` dans `versions.env`.
-2. Lance `sudo ./install.sh --yes`.
+2. Lance `sudo ./install-server-only.sh --yes`.
 
 Pour **les versions mineures** (par exemple `redis:7.4` vers `7.6`), cela suffit.
 
@@ -120,7 +135,7 @@ Pour **les versions majeures de PostgreSQL ou MongoDB**, il faut une **migration
 1. `sudo pretendo backup avant-migration-db` ;
 2. `sudo pretendo stop` ;
 3. supprime le volume : `docker volume rm pretendo-lan_postgres-database` (ou `pretendo-lan_mongodb-database`) ;
-4. change la version dans `versions.env`, puis lance `sudo ./install.sh --yes` ;
+4. change la version dans `versions.env`, puis lance `sudo ./install-server-only.sh --yes` ;
 5. `sudo pretendo restore AAAAMMJJ-HHMMSS-avant-migration-db`.
 
 > **N'utilise jamais `./update.sh` d'upstream** dans `/opt/pretendo` : il retéléchargerait les images `:latest` et ferait avancer tous les sous-modules d'un coup, ce qui a causé la plupart des pannes des installations pretendo-docker.
