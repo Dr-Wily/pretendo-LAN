@@ -36,6 +36,8 @@ GAME_SERVICE=smash-wiiu               # nom du service Docker
 GAME_REPO=https://github.com/PretendoNetwork/super-smash-bros-wiiu.git
 GAME_BRANCH=master
 GAME_COMMIT=abcdef1                   # version figée (testée)
+GAME_MIRRORS=""                       # facultatif : copies des sous-modules, « dépôt d'origine=copie » séparés par des espaces
+GAME_SKIP_SUBMODULES=""               # facultatif : sous-modules inutiles, non téléchargés (chemins depuis la racine du jeu)
 GAME_SERVER_ID=10144F00               # identifiant NEX du jeu
 GAME_TITLE_IDS="00050000101C9400 00050000101C9500 00050000101C9300"   # JPN USA EUR
 GAME_DEVICE=1                         # 1 = Wii U, 2 = 3DS
@@ -100,7 +102,7 @@ services:
 1. Crée le dossier `games/<jeu>/` dans ce dépôt.
 2. Ajoute son nom à `GAMES=` dans `versions.env` : `GAMES="mario-kart-8 smash-wiiu"`.
 3. Lance `sudo ./install-server-only.sh --yes`. Il :
-   - clone le jeu à `GAME_COMMIT` ;
+   - clone le jeu à `GAME_COMMIT` (sous-modules depuis leurs copies de `GAME_MIRRORS`, sauf ceux de `GAME_SKIP_SUBMODULES`) ;
    - génère `runtime.env` et les secrets ;
    - ajoute le service, le construit et le démarre ;
    - crée la base PostgreSQL et enregistre le jeu dans la base de comptes.

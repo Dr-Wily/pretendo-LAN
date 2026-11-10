@@ -1,0 +1,3 @@
+# Bibliothèques que la construction d'une image téléchargeait, copiées dans sources/<nom> (voir sources/README.md).
+# nom	dépôt d'origine	commit	étiquette ou branche suivie	utilisée par
+nex-protocols-common-go	https://github.com/PretendoNetwork/nex-protocols-common-go.git	41f4655e6dc9c5b9f1ba96952c04c3a042e3f735	v1.0.22	repos/wiiu-chat-secure

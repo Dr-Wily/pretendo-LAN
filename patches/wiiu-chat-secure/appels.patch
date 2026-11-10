@@ -1,0 +1,199 @@
+diff -ruN a/database/end_call.go b/database/end_call.go
+--- a/database/end_call.go	2026-11-08 18:28:14.627609391 +0100
++++ b/database/end_call.go	2026-11-08 18:28:14.659609951 +0100
+@@ -11,7 +11,7 @@
+ 		{"caller_pid", caller},
+ 	}
+ 
+-	_, err := callsCollection.DeleteOne(context.TODO(), filter)
++	_, err := callsCollection.DeleteMany(context.TODO(), filter) // * Pretendo LAN : tous les appels de l'appelant
+ 	if err != nil {
+ 		panic(err)
+ 	}
+diff -ruN a/database/get_call_info_by_target.go b/database/get_call_info_by_target.go
+--- a/database/get_call_info_by_target.go	2026-11-08 18:28:14.635609531 +0100
++++ b/database/get_call_info_by_target.go	2026-11-08 18:28:14.659609951 +0100
+@@ -14,7 +14,7 @@
+ 		{"target_pid", target},
+ 	}
+ 
+-	err := callsCollection.FindOne(context.TODO(), filter, options.FindOne()).Decode(&result)
++	err := callsCollection.FindOne(context.TODO(), filter, options.FindOne().SetSort(bson.D{{"_id", -1}})).Decode(&result)
+ 	if err != nil {
+ 		if err == mongo.ErrNoDocuments {
+ 			return 0, 0, false
+diff -ruN a/database/new_call.go b/database/new_call.go
+--- a/database/new_call.go	2026-11-08 18:28:14.615609182 +0100
++++ b/database/new_call.go	2026-11-08 18:28:14.659609951 +0100
+@@ -13,7 +13,17 @@
+ 		{"ringing", true},
+ 	}
+ 
+-	_, err := callsCollection.InsertOne(context.TODO(), document)
++	// * Pretendo LAN : anciens appels des deux consoles effacés (ils s'accumulaient : un document par appel,
++	// * un seul effacé à la fin, et l'appelé lisait le plus ancien)
++	_, err := callsCollection.DeleteMany(context.TODO(), bson.D{{"$or", bson.A{
++		bson.D{{"caller_pid", caller}}, bson.D{{"target_pid", caller}},
++		bson.D{{"caller_pid", target}}, bson.D{{"target_pid", target}},
++	}}})
++	if err != nil {
++		panic(err)
++	}
++
++	_, err = callsCollection.InsertOne(context.TODO(), document)
+ 	if err != nil {
+ 		panic(err)
+ 	}
+diff -ruN a/globals/clients.go b/globals/clients.go
+--- a/globals/clients.go	1970-01-01 01:00:00.000000000 +0100
++++ b/globals/clients.go	2026-11-08 18:28:14.655609881 +0100
+@@ -0,0 +1,34 @@
++package globals
++
++import (
++	"sync"
++
++	nex "github.com/PretendoNetwork/nex-go"
++)
++
++// * Pretendo LAN : dernière connexion vue pour chaque PID. Chaque ouverture de Wii U Chat crée une
++// * nouvelle connexion (autre port), et nex-go garde les anciennes (délai de ping de 65535 s) :
++// * FindClientFromPID en renvoyait une au hasard, souvent morte, et l'appelé n'était plus prévenu.
++var latestClients = map[uint32]*nex.Client{}
++var latestClientsMutex sync.Mutex
++
++// TrackClient mémorise la connexion d'un paquet de données reçu.
++func TrackClient(client *nex.Client) {
++	if client == nil || client.PID() == 0 {
++		return
++	}
++	latestClientsMutex.Lock()
++	defer latestClientsMutex.Unlock()
++	latestClients[client.PID()] = client
++}
++
++// FindClient renvoie la dernière connexion d'un PID si le serveur la connaît encore, sinon nil.
++func FindClient(pid uint32) *nex.Client {
++	latestClientsMutex.Lock()
++	client := latestClients[pid]
++	latestClientsMutex.Unlock()
++	if client == nil || NEXServer.FindClientFromConnectionID(client.ConnectionID()) != client {
++		return nil
++	}
++	return client
++}
+diff -ruN a/nex/matchmake-extension/update_notification_data.go b/nex/matchmake-extension/update_notification_data.go
+--- a/nex/matchmake-extension/update_notification_data.go	2026-11-08 18:28:14.567608344 +0100
++++ b/nex/matchmake-extension/update_notification_data.go	2026-11-08 18:28:14.655609881 +0100
+@@ -13,7 +13,7 @@
+ 
+ func UpdateNotificationData(err error, client *nex.Client, callID uint32, uiType uint32, uiParam1 uint32, uiParam2 uint32, strParam string) {
+ 	globals.Logger.Infof("uiType: %d, uiParam1: %d, uiParam2: %d, strParam: %s\r\n", uiType, uiParam1, uiParam2, strParam)
+-	recipientClient := globals.NEXServer.FindClientFromPID(uiParam2)
++	recipientClient := globals.FindClient(uiParam2) // * Pretendo LAN : dernière connexion, pas une ancienne au hasard
+ 
+ 	if uiType == notifications.NotificationCategories.RequestJoinGathering {
+ 		notificationType := notifications.BuildNotificationType(notifications.NotificationCategories.RequestJoinGathering, notifications.NotificationSubTypes.RequestJoinGathering.None)
+@@ -21,8 +21,10 @@
+ 
+ 		// If they don't have a session with the app, tell Friends to alert them on the HOME menu.
+ 		if recipientClient != nil && recipientClient.StationURLs() != nil {
++			globals.Logger.Infof("Pretendo LAN : appel %d -> %d : notification directe (Wii U Chat ouvert)\r\n", client.PID(), uiParam2)
+ 			nex_notifications.ProcessNotificationEvent(callID, client.PID(), notificationType, uiParam1, uiParam2, strParam)
+ 		} else {
++			globals.Logger.Infof("Pretendo LAN : appel %d -> %d : notification par le serveur d'amis\r\n", client.PID(), uiParam2)
+ 			grpc.SendFriendsNotification(client.PID(), uiParam2, true)
+ 		}
+ 	}
+@@ -40,7 +42,10 @@
+ 		}
+ 
+ 		// The user must be kicked, otherwise the app hangs forever.
+-		globals.NEXServer.TimeoutKick(client)
++		// * Pretendo LAN : l'appelant n'est plus expulsé à la fin ou à l'annulation d'un appel. Sa console
++		// * continuait d'émettre sur la connexion supprimée (« PRUDPv1 calculated signature did not match »)
++		// * et l'application se figeait (soirée de test du 06/11/2026).
++		globals.Logger.Infof("Pretendo LAN : fin d'appel %d -> %d\r\n", client.PID(), uiParam2)
+ 	}
+ 
+ 	// Build response packet
+diff -ruN a/nex/match-making/get_session_urls.go b/nex/match-making/get_session_urls.go
+--- a/nex/match-making/get_session_urls.go	2026-11-08 18:28:14.587608693 +0100
++++ b/nex/match-making/get_session_urls.go	2026-11-08 18:28:14.659609951 +0100
+@@ -12,7 +12,10 @@
+ 
+ 	hostpid, _, _ := database.GetCallInfoByCaller(gid)
+ 
+-	stationUrlStrings = globals.NEXServer.FindClientFromPID(hostpid).StationURLs()
++	// * Pretendo LAN : dernière connexion de l'appelant ; sans elle, liste vide au lieu d'un plantage
++	if host := globals.FindClient(hostpid); host != nil {
++		stationUrlStrings = host.StationURLs()
++	}
+ 
+ 	rmcResponseStream := nex.NewStreamOut(globals.NEXServer)
+ 	rmcResponseStream.WriteListString(stationUrlStrings)
+diff -ruN a/nex/match-making/unregister_gathering.go b/nex/match-making/unregister_gathering.go
+--- a/nex/match-making/unregister_gathering.go	2026-11-08 18:28:14.603608972 +0100
++++ b/nex/match-making/unregister_gathering.go	2026-11-08 18:28:14.659609951 +0100
+@@ -8,10 +8,13 @@
+ )
+ 
+ func UnregisterGathering(err error, client *nex.Client, callID uint32, idGathering uint32) {
++	globals.Logger.Infof("Pretendo LAN : %d ferme l'appel %d\r\n", client.PID(), idGathering)
+ 	database.EndCall(idGathering)
+ 
+-	rmcResponse := nex.NewRMCResponse(match_making.MethodUnregisterGathering, callID)
+-	rmcResponse.SetSuccess(match_making.ProtocolID, []byte{0x01})
++	// * Pretendo LAN : protocole et méthode étaient inversés : la console ne reconnaissait pas la réponse,
++	// * l'attendait sans fin et se figeait au raccroché (essai du 08/11/2026)
++	rmcResponse := nex.NewRMCResponse(match_making.ProtocolID, callID)
++	rmcResponse.SetSuccess(match_making.MethodUnregisterGathering, []byte{0x01})
+ 
+ 	rmcResponseBytes := rmcResponse.Bytes()
+ 
+diff -ruN a/nex/match-making-ext/end_participation.go b/nex/match-making-ext/end_participation.go
+--- a/nex/match-making-ext/end_participation.go	2026-11-08 18:28:14.595608833 +0100
++++ b/nex/match-making-ext/end_participation.go	2026-11-08 18:28:14.659609951 +0100
+@@ -5,12 +5,16 @@
+ 
+ 	"github.com/PretendoNetwork/nex-go"
+ 	match_making_ext "github.com/PretendoNetwork/nex-protocols-go/match-making-ext"
++	"github.com/PretendoNetwork/wiiu-chat-secure/database"
+ 	"github.com/PretendoNetwork/wiiu-chat-secure/globals"
+ )
+ 
+ func EndParticipation(err error, client *nex.Client, callID uint32, idGathering uint32, strMessage string) {
+ 	globals.Logger.Info("ENDING PARTICIPATION: GID: " + strconv.FormatUint(uint64(idGathering), 10) + ", MESSAGE: " + strMessage)
+ 
++	// * Pretendo LAN : l'appel (GID = PID de l'appelant) est terminé : on l'efface
++	database.EndCall(idGathering)
++
+ 	rmcResponseStream := nex.NewStreamOut(globals.NEXServer)
+ 
+ 	// TODO - Check if this is always true or not, and if not when to set to false
+diff -ruN a/nex/notifications/process_notification_event.go b/nex/notifications/process_notification_event.go
+--- a/nex/notifications/process_notification_event.go	2026-11-08 18:28:14.575608483 +0100
++++ b/nex/notifications/process_notification_event.go	2026-11-08 18:28:14.655609881 +0100
+@@ -27,7 +27,10 @@
+ 
+ 	rmcRequestBytes := rmcRequest.Bytes()
+ 
+-	targetClient := globals.NEXServer.FindClientFromPID(uiParam2)
++	targetClient := globals.FindClient(uiParam2) // * Pretendo LAN : dernière connexion
++	if targetClient == nil {
++		return
++	}
+ 
+ 	requestPacket, _ := nex.NewPacketV1(targetClient, nil)
+ 
+diff -ruN a/nex/server.go b/nex/server.go
+--- a/nex/server.go	2026-11-08 18:28:14.555608134 +0100
++++ b/nex/server.go	2026-11-08 18:28:14.655609881 +0100
+@@ -23,6 +23,7 @@
+ 	globals.NEXServer.SetPingTimeout(65535)
+ 
+ 	globals.NEXServer.On("Data", func(packet *nex.PacketV1) {
++		globals.TrackClient(packet.Sender())
+ 		request := packet.RMCRequest()
+ 
+ 		fmt.Println("==WiiU Chat - Secure==")

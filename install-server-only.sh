@@ -350,12 +350,27 @@ for g in $GAMES; do
         mkdir -p "games/$g"
         find "$REPO_DIR/games/$g" -maxdepth 1 -type f -exec cp -f {} "games/$g/" \;
         [[ -d $REPO_DIR/games/$g/patches ]] && { rm -rf "games/$g/patches"; cp -r "$REPO_DIR/games/$g/patches" "games/$g/"; }
+        # sous-modules depuis les copies du projet (GAME_MIRRORS : « dépôt d'origine=copie »), y compris
+        # imbriqués : git transmet cette configuration aux commandes qu'il lance
+        n=0
+        for m in ${GAME_MIRRORS:-}; do
+            export "GIT_CONFIG_KEY_$n=url.${m#*=}.insteadOf" "GIT_CONFIG_VALUE_$n=${m%%=*}"; n=$((n + 1))
+        done
+        for s in ${GAME_SKIP_SUBMODULES:-}; do   # sous-modules inutiles (GAME_SKIP_SUBMODULES) : pas téléchargés
+            export "GIT_CONFIG_KEY_$n=submodule.${s##*/}.update" "GIT_CONFIG_VALUE_$n=none"; n=$((n + 1))
+        done
+        export GIT_CONFIG_COUNT=$n
         [[ -d games/$g/src/.git ]] || git clone -q "$GAME_REPO" "games/$g/src"
+        git -C "games/$g/src" remote set-url origin "$GAME_REPO"   # installations antérieures : dépôt d'origine
         if [[ ! -f games/$g/.pinned-by-update ]]; then   # 'pretendo update' peut avoir choisi une autre version
             git -C "games/$g/src" fetch -q origin || true
             git -C "games/$g/src" checkout -q -f "$GAME_COMMIT"
         fi
         git -C "games/$g/src" submodule update --init --recursive --force -q
+        for s in ${GAME_SKIP_SUBMODULES:-}; do   # installations antérieures : sous-module inutile retiré
+            p=$(dirname "$s")
+            git -C "games/$g/src/$p" submodule deinit -f -q -- "${s##*/}" 2>/dev/null || true
+        done
         printf '**/.git\n' >"games/$g/.dockerignore"
         touch "games/$g/runtime.env"
     )
@@ -459,6 +474,11 @@ for svc in friends wiiu-chat-authentication wiiu-chat-secure super-mario-maker s
     # restart: always partout (upstream met unless-stopped sur 3 jeux : ils ne repartaient
     # pas après un arrêt de Docker, par exemple lors de sa mise à jour)
     printf '  %s:\n    command: ["./server"]\n    restart: always\n' "$svc"
+    if [[ $svc == wiiu-chat-secure ]]; then
+        # bibliothèque copiée dans le dépôt (sources/EXTRAS.tsv), au lieu du téléchargement sur GitHub
+        # de son Dockerfile (patches/wiiu-chat-secure/bibliotheque-locale.patch)
+        printf '    build:\n      context: ./repos/wiiu-chat-secure\n      additional_contexts:\n        nex-protocols-common-go: ./config/nex-protocols-common-go\n'
+    fi
     if [[ $svc == friends ]]; then
         # présence des joueurs (console, jeu) pour l'interface web : patches/friends/presence-pour-admin.patch
         printf '    environment:\n      PN_FRIENDS_LAN_PRESENCE_PORT: "8095"\n    ports:\n      - "127.0.0.1:8095:8095"\n'
@@ -487,6 +507,17 @@ cat <<EOF
     command: ["python3", "-u", "/nncs-local.py", "\${SERVER_IP:-}", "\${NNCS_IP:-}"]
     volumes:
       - ./config/nncs-local.py:/nncs-local.py:ro
+  # DHCP des consoles (dnsmasq, DNS désactivé), actif seulement s'il est activé dans l'interface web
+  # ou par « pretendo dhcp on » : sur un réseau sans autre DHCP. Réseau de la machine : diffusion DHCP.
+  dhcp:
+    build: ./config/dhcp-image
+    image: pretendo-lan-dhcp
+    profiles: [dhcp]
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_RAW]
+    restart: always
+    volumes:
+      - ./config/dhcp:/etc/dnsmasq-lan
 EOF
 if [[ $SSSL_ENABLED -eq 1 ]]; then
 cat <<'EOF'
@@ -587,9 +618,25 @@ install -m 644 "$REPO_DIR/config/public-nat-local.Corefile" config/public-nat-lo
 old_nat_ip=$(envval .env NNCS_IP)
 if [[ $old_nat_ip != "$NAT_IP" ]]; then
     [[ -z $old_nat_ip ]] || ip addr del "$old_nat_ip/32" dev "$iface" 2>/dev/null || true
-    sed -i '/^NNCS_IP=/d;/^COMPOSE_PROFILES=/d' .env
-    [[ -z $NAT_IP ]] || printf 'NNCS_IP=%s\nCOMPOSE_PROFILES=nat-local\n' "$NAT_IP" >>.env
+    sed -i '/^NNCS_IP=/d' .env
+    [[ -z $NAT_IP ]] || printf 'NNCS_IP=%s\n' "$NAT_IP" >>.env
 fi
+# DHCP des consoles : image, script de réservation et préfixes MAC Nintendo (réglages et réservations gardés)
+install -d -m 755 config/dhcp config/dhcp/reservations config/dhcp-image
+install -m 644 "$REPO_DIR/config/dhcp/Dockerfile" config/dhcp-image/Dockerfile
+# bibliothèque nex-protocols-common-go de wiiu-chat-secure (sources/EXTRAS.tsv), donnée à sa construction
+if ! diff -rq "$REPO_DIR/sources/nex-protocols-common-go" config/nex-protocols-common-go >/dev/null 2>&1; then
+    rm -rf config/nex-protocols-common-go
+    cp -a "$REPO_DIR/sources/nex-protocols-common-go" config/
+fi
+install -m 755 "$REPO_DIR/config/dhcp/reserve.sh" config/dhcp/reserve.sh
+install -m 644 "$REPO_DIR/config/dhcp/nintendo-oui.txt" config/dhcp/nintendo-oui.txt
+# profils compose actifs : test NAT local (seconde IP) et DHCP (activé dans config/dhcp/dhcp.json)
+profiles=()
+[[ -n $(envval .env NNCS_IP) ]] && profiles+=(nat-local)
+jq -e '.enabled == true' config/dhcp/dhcp.json >/dev/null 2>&1 && profiles+=(dhcp)
+sed -i '/^COMPOSE_PROFILES=/d' .env
+[[ ${#profiles[@]} -eq 0 ]] || echo "COMPOSE_PROFILES=$(IFS=,; echo "${profiles[*]}")" >>.env
 
 # ----------------------------------------------------------------------------- 9. environnement des jeux
 ACCOUNT_KEY=$(envval environment/account.local.env PN_ACT_CONFIG_GRPC_MASTER_API_KEY_ACCOUNT)
@@ -626,8 +673,12 @@ docker compose config -q || die "configuration compose invalide (compose.yml + c
 info "Commande 'pretendo', interface web (port 8090) et services systemd…"
 install -m 755 "$REPO_DIR/tools/pretendo" /usr/local/bin/pretendo
 install -m 755 "$REPO_DIR/tools/pretendo-admin.py" /usr/local/bin/pretendo-admin
+install -m 755 "$REPO_DIR/tools/pretendo-dhcp.py" /usr/local/bin/pretendo-dhcp
 [[ -s admin-password.txt ]] || { randpw 20 >admin-password.txt; chmod 600 admin-password.txt; }
 /usr/local/bin/pretendo nat-apply
+# DHCP : réglages par défaut (désactivé) à la première installation, puis configuration de dnsmasq
+PRETENDO_DIR=$INSTALL_DIR /usr/local/bin/pretendo-dhcp init
+PRETENDO_DIR=$INSTALL_DIR /usr/local/bin/pretendo-dhcp render || warn "configuration DHCP invalide : onglet DHCP de l'interface web"
 
 cat >/etc/systemd/system/pretendo.service <<EOF
 [Unit]
@@ -718,6 +769,8 @@ systemctl restart pretendo-admin.service
 # ----------------------------------------------------------------------------- 11. démarrage
 info "Construction des images modifiées et démarrage…"
 retry docker pull -q "$IMG_PYTHON" >/dev/null   # même sans test local : « pretendo nat-ip » doit marcher hors ligne
+# image du DHCP construite même s'il est désactivé : il doit pouvoir s'activer hors ligne
+retry docker compose --profile dhcp build dhcp
 retry docker compose up -d --build --remove-orphans
 docker compose exec -T nginx nginx -s reload </dev/null >/dev/null 2>&1 || true   # prend en compte le portail
 # pré-remplissage du cache tagaya (servi ensuite même hors ligne)

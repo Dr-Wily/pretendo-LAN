@@ -5,7 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Versions et empreintes de tous les paquets figées (requirements.txt) : pip refuse tout autre fichier.
+# --no-build-isolation : les paquets livrés en sources sont construits avec setuptools et wheel de
+# l'image de base (figée), au lieu de leur dernière version téléchargée au moment de la construction.
+RUN pip install --require-hashes --no-build-isolation -r requirements.txt
 COPY src/ .
 COPY server_config.py .
 RUN python -m grpc_tools.protoc --proto_path=grpc --python_out=. --grpc_python_out=. grpc/amkj_service.proto

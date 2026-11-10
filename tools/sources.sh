@@ -13,7 +13,8 @@
 #    maj <brique> [commit|branche] met une brique à jour (par défaut : dernière
 #                                  version de sa branche). Brique : un dossier de
 #                                  repos/ (account, friends…) ou pretendo-docker,
-#                                  la base, qui entraîne ses sous-modules
+#                                  la base, qui entraîne ses sous-modules ; ou une
+#                                  bibliothèque de sources/EXTRAS.tsv (étiquette ou commit)
 #    controler                     les correctifs (upstream et Pretendo LAN)
 #                                  s'appliquent-ils aux sources actuelles ?
 # =============================================================================
@@ -23,6 +24,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC=$REPO_DIR/sources
 BASE=$SRC/pretendo-docker
 MANIFEST=$SRC/SOURCES.tsv
+EXTRAS=$SRC/EXTRAS.tsv
 # shellcheck source=../versions.env
 . "$REPO_DIR/versions.env"
 
@@ -87,6 +89,24 @@ import_one() { # import_one <chemin> : remplace sources/pretendo-docker/<chemin>
     pin_images "$BASE/$path"
 }
 
+# Bibliothèques que la construction d'une image téléchargeait (pas des sous-modules de la base),
+# copiées dans sources/<nom>. EXTRAS.tsv : nom <TAB> dépôt <TAB> commit <TAB> étiquette ou branche <TAB> utilisée par
+extras() { [[ -f $EXTRAS ]] && grep -v '^#' "$EXTRAS" | cut -f1; }
+extra_get() { [[ -f $EXTRAS ]] && awk -F'\t' -v n="$1" -v c="$2" '!/^#/ && $1==n {print $c}' "$EXTRAS"; }
+extra_set() { # extra_set <nom> <commit> <version>
+    local tmp; tmp=$(mktemp)
+    awk -F'\t' -v OFS='\t' -v n="$1" -v c="$2" -v v="$3" '!/^#/ && $1==n {$3=c; $4=v} {print}' "$EXTRAS" >"$tmp"
+    cat "$tmp" >"$EXTRAS"; rm -f "$tmp"
+}
+import_extra() { # import_extra <nom>
+    local url commit
+    url=$(extra_get "$1" 2); commit=$(extra_get "$1" 3)
+    [[ -n $url && -n $commit ]] || die "bibliothèque absente de $EXTRAS : $1"
+    echo "  $1 : $url @ ${commit:0:8}"
+    rm -rf "${SRC:?}/$1"
+    fetch_tree "$url" "$commit" "$SRC/$1"
+}
+
 # sous-modules d'un commit de la base : chemin url commit branche
 base_submodules() { # base_submodules <url> <commit>
     local tmp; tmp=$(mktemp -d)
@@ -144,10 +164,18 @@ case "${1:-}" in
             [[ -z $rem ]] && rem="?"
             [[ $rem == "${commit:0:8}" ]] && rem="à jour"
             printf '%-30s %-9s %-9s %s\n' "$( [[ $path == . ]] && echo pretendo-docker || echo "${path#repos/}")" "${commit:0:8}" "$rem" "$br"
+        done
+        for n in $(extras); do   # bibliothèques : dernière étiquette publiée
+            url=$(extra_get "$n" 2); commit=$(extra_get "$n" 3); br=$(extra_get "$n" 4)
+            rem=$(timeout 20 git ls-remote --tags --sort=-v:refname "$url" 'v*' | grep -v '\^{}' | head -1 | sed 's#.*refs/tags/##')
+            [[ -z $rem ]] && rem="?"
+            [[ $rem == "$br" ]] && rem="à jour"
+            printf '%-30s %-9s %-9s %s\n' "$n" "${commit:0:8}" "$rem" "$br"
         done ;;
     importer)
         info "Reconstruction de sources/ d'après $MANIFEST"
         for path in $(bricks); do import_one "$path"; done
+        for n in $(extras); do import_extra "$n"; done
         controler ;;
     maj)
         brick=${2:-}; [[ -n $brick ]] || die "usage : tools/sources.sh maj <brique> [commit|branche]"
@@ -163,6 +191,11 @@ case "${1:-}" in
                 manifest_set "$p" "$u" "$c" "$b"
                 import_one "$p"
             done
+        elif [[ -n $(extra_get "$brick" 2) ]]; then
+            url=$(extra_get "$brick" 2); v=${3:-$(extra_get "$brick" 4)}
+            commit=$(resolve "$url" "$v")
+            extra_set "$brick" "$commit" "$v"
+            import_extra "$brick"
         else
             path=repos/$brick
             url=$(manifest_get "$path" 2); [[ -n $url ]] || die "brique inconnue : $brick (voir tools/sources.sh verifier)"
@@ -176,5 +209,5 @@ case "${1:-}" in
     controler)
         controler ;;
     *)
-        sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

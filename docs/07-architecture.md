@@ -91,7 +91,7 @@ Ces causes ont toutes été observées sur une vraie installation et corrigées 
 | Logs Docker illimités | Disque plein, MongoDB s'arrête | Rotation des logs |
 | Mise en veille de l'hôte | Serveur injoignable | Veille désactivée |
 | Certificat mitmproxy présent dans un seul volume | Volume perdu, Inkay invalide | Copie sur l'hôte et sauvegardes |
-| Code récupéré sur GitHub à chaque installation | Un dépôt indisponible, archivé ou modifié, ou un incident réseau, et l'installation échoue (pretendo-docker est archivé depuis mai 2025) | Code des serveurs copié dans `sources/` |
+| Code récupéré sur GitHub à chaque installation | Un dépôt indisponible, archivé ou modifié, ou un incident réseau, et l'installation échoue (pretendo-docker est archivé depuis mai 2025) | Code des serveurs copié dans `sources/`, ainsi que la bibliothèque que la construction de Wii U Chat téléchargeait (`sources/EXTRAS.tsv`) ; serveur Mario Kart 8 et sa bibliothèque téléchargés depuis leurs copies sur le GitHub du projet (`GAME_REPO`, `GAME_MIRRORS`) |
 | Images de base en étiquette mobile (`node:20-alpine`) | La même étiquette désigne une autre image au fil des mois | Empreinte ajoutée par `tools/sources.sh` (`BASE_IMAGES`) |
 | Image mitmproxy désignée par l'étiquette `:local` (ghcr.io/matthewl246) | L'auteur peut la remplacer à tout moment ; sa reconstruction échoue (base Debian 11, dépôts archivés) | Figée par son empreinte (`IMG_MITMPROXY`) ; son code est dans `sources/` |
 | Cache de construction limité à 10 % du disque par Docker | Chaque relance de l'installation reconstruisait tout, en retéléchargeant les dépendances | Cache de 8 à 15 Go (`builder.gc` dans `daemon.json`) |

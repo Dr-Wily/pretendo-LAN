@@ -57,6 +57,7 @@ Il reste ensuite à :
 6. [Dépannage](docs/06-depannage.md)
 7. [Architecture et choix techniques](docs/07-architecture.md)
 8. [Ajouter un serveur de jeu](docs/08-ajouter-un-jeu.md)
+9. [DHCP des consoles](docs/09-dhcp.md)
 
 ## Ce qui fonctionne
 

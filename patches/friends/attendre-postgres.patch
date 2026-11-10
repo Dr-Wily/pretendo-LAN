@@ -1,0 +1,36 @@
+--- a/database/connect_postgres.go
++++ b/database/connect_postgres.go
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"os"
++	"time"
+ 
+ 	_ "github.com/lib/pq"
+ 
+@@ -17,6 +18,25 @@
+ 	Manager, err = sqlmanager.NewSQLManager("postgres", os.Getenv("PN_FRIENDS_CONFIG_DATABASE_URI"), int64(globals.DatabaseMaxConnections))
+ 	if err != nil {
+ 		globals.Logger.Critical(err.Error())
++		os.Exit(1)
++	}
++
++	// * Pretendo LAN : au démarrage de la machine, Docker peut lancer ce serveur avant PostgreSQL.
++	// * L'initialisation échouait alors (« connection refused ») sans arrêter le serveur, resté
++	// * à moitié démarré. On attend PostgreSQL 60 s au plus, puis on quitte en erreur :
++	// * « restart: always » relance le conteneur.
++	for attempt := 1; ; attempt++ {
++		if _, err = Manager.Exec(`SELECT 1`); err == nil {
++			break
++		}
++		if attempt >= 60 {
++			globals.Logger.Critical("PostgreSQL injoignable depuis 60 s, arrêt : " + err.Error())
++			os.Exit(1)
++		}
++		if attempt == 1 {
++			globals.Logger.Warning("PostgreSQL pas encore prêt, attente : " + err.Error())
++		}
++		time.Sleep(time.Second)
+ 	}
+ 
+ 	globals.Logger.Success("Connected to Postgres!")

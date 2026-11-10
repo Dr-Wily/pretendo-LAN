@@ -111,7 +111,7 @@ Conseils :
 
 ### 3. Le code des serveurs du dépôt (`sources/`), pour qui maintient le dépôt
 
-Le code de pretendo-docker et de ses sous-modules est copié dans `sources/`, avec ses versions dans `sources/SOURCES.tsv`. Pour le faire avancer depuis les dépôts d'origine :
+Le code de pretendo-docker et de ses sous-modules est copié dans `sources/`, avec ses versions dans `sources/SOURCES.tsv`. La bibliothèque nex-protocols-common-go de Wii U Chat est dans `sources/EXTRAS.tsv` : `tools/sources.sh maj nex-protocols-common-go <étiquette>`. Pour le faire avancer depuis les dépôts d'origine :
 
 ```bash
 tools/sources.sh verifier                  # versions disponibles chez les auteurs

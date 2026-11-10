@@ -66,6 +66,62 @@ wait_mongo() {
     echo "MongoDB ne répond pas (replica set non primaire)" >&2; return 1
 }
 
+# Au démarrage de la machine, Docker relance tous les conteneurs en même temps. Un serveur parti avant
+# sa base de données (« connection refused » vers PostgreSQL ou MongoDB) s'arrête et redémarre souvent
+# tout seul, mais certains restent à moitié démarrés sans rien signaler (constaté le 06/11/2026 : amis,
+# Splatoon, Pikmin 3). Une fois les bases prêtes, on relance ceux dont le journal de démarrage le montre.
+# db_race_fix [minutes] : seulement les conteneurs démarrés depuis moins de [minutes] (surveillance).
+db_race_fix() {
+    local max=${1:-0} i svc cid started age n now
+    if (( max > 0 )); then
+        # surveillance (chaque minute) : sans attente ; rien à faire tant que PostgreSQL n'est pas prêt
+        dcx postgres pg_isready -q >/dev/null 2>&1 || return 0
+    else
+        for i in $(seq 1 60); do
+            dcx postgres pg_isready -q >/dev/null 2>&1 && break
+            sleep 2
+        done
+        wait_mongo >/dev/null 2>&1 || true
+    fi
+    now=$(date +%s)
+    for svc in $(dc ps --services --status running 2>/dev/null); do
+        [[ $svc == postgres || $svc == mongodb ]] && continue
+        cid=$(dc ps -q "$svc" 2>/dev/null); [[ -n $cid ]] || continue
+        started=$(docker inspect -f '{{.State.StartedAt}}' "$cid" 2>/dev/null) || continue
+        age=$(( now - $(date -d "$started" +%s 2>/dev/null || echo "$now") ))
+        (( max > 0 && age > max * 60 )) && continue
+        # journal du démarrage en cours seulement (500 premières lignes depuis StartedAt)
+        # (sauf l'attente prévue par patches/friends/attendre-postgres.patch, suivie d'un démarrage normal)
+        n=$(docker logs --since "$started" "$cid" 2>&1 | head -500 | grep -E '(5432|27017|6379|postgres|mongodb|redis).*([Cc]onnection refused|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|no such host)' | grep -vc 'pas encore prêt')
+        if (( n > 0 )); then
+            echo "$svc a démarré avant sa base de données (« connection refused ») : relance"
+            dc restart "$svc" >/dev/null 2>&1
+        fi
+    done
+    return 0
+}
+
+# Démarrage de la machine (moins de 15 min) : Docker relance tous les conteneurs en même temps, dans le
+# désordre, et un serveur parti avant ses bases peut rester à moitié démarré. Une fois PostgreSQL, MongoDB et
+# Redis prêts, on relance dans l'ordre le serveur de comptes, puis, quand il répond, tous les serveurs qui en
+# dépendent (jeux, amis, Miiverse, site…). Aucune console n'est connectée à ce moment-là.
+BASE_SERVICES=" postgres mongodb redis minio nginx nginx-sssl coredns-internal coredns-public mailpit mitmproxy-pretendo nncs dhcp adminer account "
+boot_settle() {
+    local up i svc apps=()
+    up=$(cut -d. -f1 /proc/uptime)
+    (( up < 900 )) || return 0
+    for i in $(seq 1 60); do dcx postgres pg_isready -q >/dev/null 2>&1 && break; sleep 2; done
+    wait_mongo >/dev/null 2>&1 || echo "MongoDB ne répond pas encore"
+    for i in $(seq 1 30); do dcx redis redis-cli ping 2>/dev/null | grep -q PONG && break; sleep 2; done
+    dc restart account >/dev/null 2>&1
+    for i in $(seq 1 45); do p_account && break; sleep 2; done
+    for svc in $(dc ps --services --status running 2>/dev/null); do
+        [[ $BASE_SERVICES == *" $svc "* ]] || apps+=("$svc")
+    done
+    echo "Démarrage de la machine : bases prêtes, serveur de comptes relancé ; relance de ${apps[*]}"
+    [[ ${#apps[@]} -eq 0 ]] || dc restart "${apps[@]}" >/dev/null 2>&1
+}
+
 register_games() {
     # Les scripts d'upstream ne connaissent pas ces jeux : on (ré)enregistre leur
     # entrée dans pretendo_account.servers (idempotent), puis on lance leurs crochets.
@@ -178,14 +234,72 @@ nat_ip_set() { # nat_ip_set <ip>|off
     fi
     dc --profile nat-local rm -fs nncs >/dev/null 2>&1
     [[ -n $old && $old != "$new" ]] && ip addr del "$old/32" dev "$dev" 2>/dev/null
-    sed -i '/^NNCS_IP=/d;/^COMPOSE_PROFILES=/d' .env
-    [[ -n $new ]] && printf 'NNCS_IP=%s\nCOMPOSE_PROFILES=nat-local\n' "$new" >>.env
+    sed -i '/^NNCS_IP=/d' .env
+    [[ -n $new ]] && printf 'NNCS_IP=%s\n' "$new" >>.env
+    profiles_apply
     nat_apply
     dc_up --force-recreate coredns-public || die "redémarrage du DNS impossible"
     [[ -n $new ]] && { dc_up nncs || die "démarrage du test NAT local impossible"; }
     if [[ -n $new ]]; then echo "Test NAT local actif, seconde adresse $new. Réserve-la dans ta box, hors de sa plage DHCP."
     else echo "Test NAT public de Pretendo actif (Internet requis)."; fi
     echo "Les consoles refont leur test en relançant le mode en ligne du jeu."
+}
+
+# ---------------------------------------------------------------- DHCP des consoles
+# Réglages, réservations et baux : config/dhcp (outil pretendo-dhcp). Le conteneur dhcp (profil compose
+# « dhcp ») ne tourne que si le DHCP est activé.
+DHCP_TOOL=/usr/local/bin/pretendo-dhcp
+dhcp_enabled() { PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" enabled 2>/dev/null; }
+profiles_apply() { # COMPOSE_PROFILES de .env : test NAT local et DHCP
+    local p=()
+    [[ -n $(nncs_ip) ]] && p+=(nat-local)
+    dhcp_enabled && p+=(dhcp)
+    sed -i '/^COMPOSE_PROFILES=/d' .env
+    [[ ${#p[@]} -eq 0 ]] || echo "COMPOSE_PROFILES=$(IFS=,; echo "${p[*]}")" >>.env
+}
+dhcp_apply() { # réécrit la configuration de dnsmasq et (re)démarre ou arrête le conteneur
+    PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" render || return 1
+    profiles_apply
+    if dhcp_enabled; then
+        dc_up --force-recreate dhcp >/dev/null 2>&1 || { echo "ERREUR : démarrage du DHCP impossible (image absente ? sudo pretendo rebuild)" >&2; return 1; }
+        echo "DHCP actif."
+    else
+        dc --profile dhcp rm -fs dhcp >/dev/null 2>&1
+        echo "DHCP arrêté."
+    fi
+}
+dhcp_reload() { # réservations relues par dnsmasq (un fichier supprimé n'est oublié qu'après SIGHUP)
+    local cid; cid=$(dc ps -q dhcp 2>/dev/null)
+    [[ -n $cid ]] && docker kill -s HUP "$cid" >/dev/null 2>&1
+    return 0
+}
+dhcp_cmd() {
+    case "${1:-status}" in
+        status) PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" show --text
+                if dhcp_enabled; then
+                    [[ -n $(dc ps -q --status running dhcp 2>/dev/null) ]] && echo "  conteneur : en marche" || echo "  !!! conteneur : arrêté"
+                fi ;;
+        on)
+            hold
+            if [[ ${2:-} != --force ]]; then
+                local others; others=$(PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" probe) || die "vérification du réseau impossible"
+                [[ -z $others ]] || die "un autre serveur DHCP répond sur ce réseau ($others) : deux DHCP se disputeraient les machines. Coupe-le d'abord (box), ou force : sudo pretendo dhcp on --force"
+            fi
+            PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" set-enabled true || exit 1
+            dhcp_apply || { PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" set-enabled false; profiles_apply; exit 1; } ;;
+        off)
+            hold
+            PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" set-enabled false || exit 1
+            dhcp_apply ;;
+        apply)   hold; dhcp_apply ;;
+        reserve) [[ -n ${2:-} && -n ${3:-} ]] || die "usage : pretendo dhcp reserve <mac> <ip> [nom]"
+                 PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" reserve "$2" "$3" "${4:-}" && dhcp_reload ;;
+        forget)  [[ -n ${2:-} ]] || die "usage : pretendo dhcp forget <mac>"
+                 PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" forget "$2" && dhcp_reload ;;
+        probe)   local o; o=$(PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" probe) || exit 1
+                 if [[ -n $o ]]; then echo "Autre(s) serveur(s) DHCP sur ce réseau : $o"; else echo "Aucun autre serveur DHCP ne répond."; fi ;;
+        *) die "usage : pretendo dhcp [status|on [--force]|off|apply|reserve <mac> <ip> [nom]|forget <mac>|probe]" ;;
+    esac
 }
 
 # ---------------------------------------------------------------- sondes réelles
@@ -205,7 +319,11 @@ PY
 }
 p_dns() { [[ $(dns_answer account.nintendo.net "$(server_ip)") == "$(server_ip)" ]]; }   # DNS des consoles
 # Résolution extérieure. Sans Internet sur la machine, son échec est normal et n'est pas une panne.
-host_online() { getent hosts nncs1.app.pretendo.cc >/dev/null; }
+# Internet joignable ? On interroge directement le DNS externe de coredns-internal (UPSTREAM_DNS) : le
+# résolveur de la machine peut être un serveur Pretendo (DHCP de Pretendo LAN), qui répond même sans
+# Internet routé (pretendo.cc toujours résolu, autres noms par un serveur qui, lui, a Internet).
+upstream_dns() { local d; d=$(grep -E '^UPSTREAM_DNS=' "$REPO_DIR/versions.env" 2>/dev/null | cut -d= -f2- | tr -d '"' | awk '{print $1}'); echo "${d:-1.1.1.1}"; }
+host_online() { [[ -n $(dns_answer deb.debian.org "$(upstream_dns)") ]]; }
 p_dns_nat() { # test NAT des consoles
     if [[ -n $(nncs_ip) ]]; then
         [[ $(dns_answer nncs1.app.nintendowifi.net "$(server_ip)") == "$(server_ip)" && $(dns_answer nncs2.app.nintendowifi.net "$(server_ip)") == "$(nncs_ip)" ]]
@@ -313,6 +431,7 @@ watchdog() {
         dc_up >/dev/null 2>&1
         return 0
     fi
+    db_race_fix 15   # serveur démarré il y a moins de 15 min, avant sa base de données
     wd_check nginx p_nginx || return 0   # sans nginx, les autres sondes échoueraient aussi
     wd_check coredns-public p_dns
     wd_check coredns-public p_dns_nat
@@ -434,7 +553,7 @@ boss_ftp() { # récupère SD:/boss_keys.bin sur la Wii U (ftpiiu lancé)
 }
 
 # ---------------------------------------------------------------- sauvegarde / restauration
-CONFIG_FILES=(.env secrets.txt environment compose.override.yml admin-password.txt certs games/*/secrets.env games/*/runtime.env config/accords)
+CONFIG_FILES=(.env secrets.txt environment compose.override.yml admin-password.txt certs games/*/secrets.env games/*/runtime.env config/accords config/dhcp)
 SECRET_FILES=(console-files/cert-chain.pem console-files/ssl-cert-private-key.pem console-files/CACERT_NINTENDO_CA_G3.der
               console-files/boss_keys.bin console-files/aes_keys.txt)
 
@@ -521,8 +640,25 @@ wait_running() { # le service tourne-t-il sans redémarrer en boucle ?
     [[ "$(docker inspect -f '{{.State.Running}}' "$(dc ps -q "$svc")" 2>/dev/null)" == true && $n0 == "$n1" ]]
 }
 
+game_mirrors() { # game_mirrors <dossier> : sous-modules d'un jeu depuis les copies du projet (GAME_MIRRORS), sauf les inutiles (GAME_SKIP_SUBMODULES)
+    [[ $1 == games/*/src && -f $(dirname "$1")/game.conf ]] || return 0
+    local m s n=0 mirrors skips
+    # shellcheck disable=SC1090,SC1091
+    mirrors=$(. "$(dirname "$1")/game.conf"; echo "${GAME_MIRRORS:-}")
+    # shellcheck disable=SC1090,SC1091
+    skips=$(. "$(dirname "$1")/game.conf"; echo "${GAME_SKIP_SUBMODULES:-}")
+    for m in $mirrors; do
+        export "GIT_CONFIG_KEY_$n=url.${m#*=}.insteadOf" "GIT_CONFIG_VALUE_$n=${m%%=*}"; n=$((n + 1))
+    done
+    for s in $skips; do   # sous-modules inutiles (GAME_SKIP_SUBMODULES) : pas téléchargés
+        export "GIT_CONFIG_KEY_$n=submodule.${s##*/}.update" "GIT_CONFIG_VALUE_$n=none"; n=$((n + 1))
+    done
+    export GIT_CONFIG_COUNT=$n
+}
+
 checkout_brick() { # checkout_brick <dossier> <commit> : change de version + réapplique les correctifs
     local dir=$1 rev=$2 pdir; pdir=$(patch_dir "$dir")
+    game_mirrors "$dir"
     git -C "$dir" reset -q --hard && git -C "$dir" clean -qfd
     git -C "$dir" checkout -q -f "$rev" && git -C "$dir" submodule -q update --init --recursive --force || return 1
     if [[ -d $pdir ]]; then
@@ -543,7 +679,7 @@ checkout_brick() { # checkout_brick <dossier> <commit> : change de version + ré
 record_brick() { # mémorise la version choisie (sous-module upstream ou module de jeu)
     local dir=$1 msg=$2
     if [[ $dir == repos/* ]]; then
-        git add "$dir" && git -c user.name=pretendo -c user.email=pretendo@localhost commit -qm "$msg" 2>/dev/null
+        git add "$dir" && git -c user.name=pretendo -c user.email=pretendo@localhost commit -qm "$msg" >/dev/null 2>&1   # rien à valider après un retour arrière : pas de « git status » affiché
         # install-server-only.sh ne remplacera pas cette brique par la version de sources/
         grep -qxF "$dir" .pretendo-lan-pinned 2>/dev/null || echo "$dir" >>.pretendo-lan-pinned
     else
@@ -554,6 +690,7 @@ record_brick() { # mémorise la version choisie (sous-module upstream ou module 
 update_brick() {
     local svc=$1 target=${2:-} dir=${REPO[$1]:-}
     [[ -n $dir ]] || die "brique inconnue : $svc (voir 'pretendo versions')"
+    game_mirrors "$dir"
     local old; old=$(git -C "$dir" rev-parse HEAD)
     [[ -z $target ]] && { git -C "$dir" fetch -q origin || die "pas d'accès à GitHub"; target="origin/$(repo_branch "$dir")"; }
     git -C "$dir" rev-parse -q --verify "$target^{commit}" >/dev/null || git -C "$dir" fetch -q origin
@@ -594,7 +731,11 @@ case "${1:-help}" in
         wait_network; check_ip
         nat_apply
         dc_up --remove-orphans || die "démarrage impossible. Image manquante ? Avec Internet : sudo pretendo rebuild"
+        boot_settle
+        db_race_fix
         register_games ;;
+    db-race-fix)
+        db_race_fix "${2:-0}" ;;
     stop)
         # « stop » et non « down » : les conteneurs et leurs logs survivent à un redémarrage
         touch "$HOLD"
@@ -611,6 +752,8 @@ case "${1:-help}" in
         check ;;
     nat-apply)
         nat_apply ;;
+    dhcp)
+        dhcp_cmd "${@:2}" ;;
     nat-ip)
         if [[ -z ${2:-} ]]; then
             if [[ -n $(nncs_ip) ]]; then echo "Test NAT local, seconde adresse $(nncs_ip)"; else echo "Test NAT public de Pretendo (Internet requis)"; fi
@@ -736,6 +879,13 @@ case "${1:-help}" in
         else
             echo "  public (Internet requis, erreur 118-0513 possible). Pour le test local : sudo pretendo nat-ip SECONDE_IP"
         fi
+        echo; echo "== DHCP"
+        if dhcp_enabled; then
+            [[ -n $(dc ps -q --status running dhcp 2>/dev/null) ]] && echo "  actif, conteneur en marche" || echo "  !!! activé mais conteneur arrêté : sudo pretendo dhcp apply"
+            PRETENDO_DIR=$INSTALL_DIR "$DHCP_TOOL" show --text 2>/dev/null | sed -n '2,6p'
+        else
+            echo "  désactivé (les consoles reçoivent leur adresse d'un autre DHCP, ou une IP fixe)"
+        fi
         echo; echo "== Base de comptes"
         wait_mongo && echo "  replica set MongoDB primaire : OK"
         dcx mongodb mongosh --quiet pretendo_account --eval 'print("  PNID : " + db.pnids.countDocuments({}))'
@@ -782,6 +932,8 @@ Usage : pretendo <commande>
  Réseau
   change-ip <IP>                     bascule toute la configuration sur une nouvelle IP
   nat-ip [<IP>|off]                  test NAT : seconde adresse du test local, ou retour au test public
+  dhcp [status|on|off|reserve <mac> <ip> [nom]|forget <mac>|probe]
+                                     DHCP des consoles (réseau sans autre DHCP) ; réglages : interface web
 
 Interface web : http://<ip-serveur>:8090 (utilisateur admin, mot de passe dans admin-password.txt)
 Site Pretendo : http://<ip-serveur>:8888 (inscription d'un PNID, compte, Mii)

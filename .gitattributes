@@ -10,3 +10,4 @@ tools/pretendo text eol=lf
 *.patch -text
 # Code des serveurs : copie exacte des dépôts d'origine, octet pour octet
 sources/** -text
+patches/** -text

@@ -1,0 +1,9 @@
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -14,3 +14,5 @@
+ RUN apk add git
+-RUN git clone --depth 1 --branch v1.0.22 https://github.com/PretendoNetwork/nex-protocols-common-go
++# Pretendo LAN : bibliothèque copiée dans le dépôt (sources/nex-protocols-common-go, v1.0.22) et donnée
++# à la construction (additional_contexts de compose.override.yml), au lieu d'être téléchargée sur GitHub
++COPY --from=nex-protocols-common-go . nex-protocols-common-go
+ # Terrible hack to work around the issue where the ticket timestamp is 0

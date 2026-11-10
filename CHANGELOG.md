@@ -1,5 +1,37 @@
 # Journal des modifications
 
+## 1.8.0 (10/11/2026)
+
+**DHCP des consoles** (`docs/09-dhcp.md`)
+- Sur un réseau sans autre DHCP, le serveur distribue les adresses et son DNS : rien à régler sur les consoles. dnsmasq en conteneur (`dhcp`, profil compose, réseau de la machine, DNS désactivé), désactivé par défaut.
+- Onglet *DHCP* de l'interface web : sous-réseau, masque, plage (150 adresses par défaut, en évitant l'IP du serveur et celle du test NAT), passerelle, durée du bail, activation. L'activation est refusée si un autre DHCP répond sur le réseau.
+- Réservation permanente par adresse MAC à la première connexion (toutes les machines, ou Wii U et 3DS seulement : préfixes MAC de Nintendo du registre IEEE), modifiable et supprimable dans l'onglet. Commande `pretendo dhcp`. Réglages, réservations et baux sauvegardés.
+- Testé le 06/11/2026 sur la VM de test, dans un réseau virtuel isolé (3 machines fictives) : baux, réservation automatique, mode Nintendo, même IP après effacement des baux, modification et suppression d'une réservation, détection d'un autre DHCP, activation et arrêt par `pretendo dhcp`, API de l'onglet. Validé sur consoles le 06/11/2026 sur le serveur, réseau isolé sans Internet, avec plusieurs consoles : distribution des adresses, réservations, onglet de l'interface web.
+
+**Wii U Chat** (`patches/wiiu-chat-secure/appels.patch`)
+- La console qui raccrochait ou annulait un appel se figeait : la réponse du serveur à la fermeture de l'appel avait le numéro de protocole et celui de méthode inversés, et la console l'attendait sans fin. Le serveur n'expulse plus non plus l'appelant à la fin d'un appel.
+- Après le premier appel, l'appelé n'était souvent plus prévenu : le serveur garde les anciennes connexions de chaque console et en choisissait une au hasard. Il utilise désormais la dernière.
+- Un seul appel en cours par console dans la base, effacé à la fin de l'appel. Chaque appel est noté dans le journal (appelé prévenu directement ou par le serveur d'amis, fermeture).
+- Validé sur consoles le 08/11/2026 sur la VM de test avec deux Wii U et quatre comptes : appel vers une console au menu HOME ou dans Wii U Chat, appel accepté puis raccroché d'un côté ou de l'autre, appel annulé, Wii U Chat fermé et rouvert, changements de compte. Aucun gel. Journal vérifié : 19 appels, aucune erreur.
+
+**Démarrage**
+- Au démarrage de la machine, certains serveurs (amis, Splatoon, Pikmin 3) démarraient avant leur base de données et restaient à moitié lancés. Le serveur d'amis attend désormais PostgreSQL. Après un démarrage de la machine, `pretendo start` relance les serveurs dans l'ordre une fois les bases et le serveur de comptes prêts. Les serveurs coupés de leur base sont repérés et relancés, au démarrage et par la surveillance (commande `pretendo db-race-fix`).
+- Vérifié le 07/11/2026 par de vrais redémarrages de la VM de test et du serveur : tous les services propres, toutes les sondes OK, prêt en une minute environ.
+- La vérification de la connexion à Internet ne donne plus de faux échec quand le DNS de la machine est le serveur lui-même.
+
+**Code externe**
+- La construction de Wii U Chat téléchargeait sur GitHub sa bibliothèque nex-protocols-common-go, par une étiquette qui peut être déplacée ou supprimée. Elle est désormais dans le dépôt (`sources/nex-protocols-common-go`, version 1.0.22, `sources/EXTRAS.tsv`).
+- Le serveur Mario Kart 8 et ses sous-modules nex_protocols_common_py et grpc_py sont téléchargés depuis leurs copies sur le GitHub du projet (`Dr-Wily/…`), toujours à la même version : ils restent disponibles si les dépôts d'origine disparaissent. Celui de nex_protocols_common_py a déjà changé de nom. grpc-protobufs, sous-module de grpc_py marqué « Deprecated » par Pretendo, n'est plus téléchargé : il ne sert qu'à refabriquer le code Python déjà enregistré dans grpc_py (option `GAME_SKIP_SUBMODULES`).
+- Vérifié le 08/11/2026 sur la VM de test : Wii U Chat construit depuis la copie du dépôt donne exactement le même programme qu'avant (empreinte identique). Module MK8 téléchargé de zéro avec les dépôts d'origine (Newtendo, EpicUsername12, Pretendo Network) rendus injoignables : téléchargement complet depuis les copies du projet. Sans les copies, le même essai échoue. Installation relancée sans erreur, toutes les sondes OK.
+- Vérifié le 10/11/2026 sur la VM de test : sans grpc-protobufs (ni le dépôt d'origine ni sa copie joignables), le module MK8 se télécharge, se construit et démarre ; depuis son conteneur, appels réels au serveur de comptes (mot de passe NEX) et au serveur d'amis (liste d'amis) réussis.
+- Paquets Python du serveur Mario Kart 8 : seuls 8 sur 28 étaient figés, leurs dépendances prenaient la dernière version publiée au moment de la construction. Les 28 sont désormais figés avec l'empreinte de chacun de leurs fichiers (`games/mario-kart-8/requirements.txt`) : pip refuse tout autre fichier. Les paquets livrés en sources sont construits avec les outils de l'image de base, figée.
+- Vérifié le 10/11/2026 sur la VM de test : construction de MK8 sans cache (90 s), paquets de l'image identiques à la liste figée, serveur démarré, appels réels aux serveurs de comptes et d'amis réussis, toutes les sondes OK. Reste téléchargé sans version figée : `build-essential` (dépôts Debian), nécessaire pour compiler netifaces.
+
+**Divers**
+- `pretendo rollback` n'affiche plus de sortie git inutile.
+
+**Non testé** : installation sur une Debian neuve sans Docker, 3DS, Wii U avec Inkay sur le DHCP du serveur.
+
 ## 1.7.0 (06/11/2026)
 
 **Testé sur la VM de test les 05 et 06/11/2026** : passage d'une 1.6.0 à la 1.7.0, installation neuve par `install-all.sh` sur une machine vidée (Docker déjà installé), relance sans reconstruction, restauration d'une sauvegarde avec sa configuration (moi) ; 2 Wii U en SSSL (utilisateur) : connexions, inscription en 4 langues, tournois de Mario Kart 8 créés, rejoints et joués par 3 comptes sans le message « nombre de courses terminé ». Non testé : Debian sans Docker préinstallé, questions de l'installateur (lancé avec `--yes`), `pretendo update` d'une brique copiée dans `sources/`, redémarrage de la machine, installation depuis un clone GitHub, 3DS, Wii U avec Inkay. Pas encore déployée sur le serveur de référence.
@@ -85,7 +117,7 @@
 - Contrepartie : un jeton intercepté reste utilisable 30 jours au lieu d'une heure. Le risque paraît acceptable sur un réseau local.
 
 **Testé les 01 et 02/11/2026 sur la VM de test, 2 Wii U en SSSL câblées, 5 comptes**
-- Validé par l'utilisateur : création sur 4 comptes, jonction depuis l'autre console, modification, affichage sous « Populaires » et « Tournois ouverts », y compris hors plage horaire, et points de 3 courses affichés au classement sur les deux consoles.
+- Validé sur consoles : création sur 4 comptes, jonction depuis l'autre console, modification, affichage sous « Populaires » et « Tournois ouverts », y compris hors plage horaire, et points de 3 courses affichés au classement sur les deux consoles.
 - Jeton : tournoi créé 1 h 31 après l'obtention du jeton, sur une console.
 - Non testé : Wii U avec Inkay, tournois en équipes, plus de 2 joueurs.
 

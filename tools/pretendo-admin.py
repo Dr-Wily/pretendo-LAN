@@ -536,6 +536,69 @@ def restart(service):
     return {"ok": code == 0, "output": (out + err)[-3000:]}
 
 
+# ---------------------------------------------------------------- DHCP (outil pretendo-dhcp, commande pretendo dhcp)
+DHCP_TOOL = "/usr/local/bin/pretendo-dhcp"
+DHCP_FIELDS = ("subnet", "netmask", "gateway", "range_start", "range_end", "lease_hours", "reserve")
+
+
+def _err(out, err):
+    return re.sub(r"^ERREUR : ", "", (err or out).strip().splitlines()[-1] if (err or out).strip() else "échec")
+
+
+def dhcp_info():
+    code, out, err = run([DHCP_TOOL, "show"], timeout=20)
+    if code:
+        return {"error": _err(out, err)}
+    d = json.loads(out)
+    _, ps, _ = run(["docker", "compose", "ps", "-q", "--status", "running", "dhcp"], timeout=20)
+    d["running"] = bool(ps.strip())
+    return d
+
+
+def dhcp_save(cfg):
+    if not isinstance(cfg, dict):
+        return {"ok": False, "error": "réglages attendus"}
+    cfg = {k: cfg[k] for k in DHCP_FIELDS if k in cfg}
+    try:
+        p = subprocess.run([DHCP_TOOL, "save", "-"], cwd=INSTALL_DIR, input=json.dumps(cfg), capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "délai dépassé"}
+    if p.returncode:
+        return {"ok": False, "error": _err(p.stdout, p.stderr)}
+    if json.loads(p.stdout).get("enabled"):
+        code, out, err = run(["/usr/local/bin/pretendo", "dhcp", "apply"], timeout=180)
+        if code:
+            return {"ok": False, "error": "enregistré, mais redémarrage du DHCP impossible : " + _err(out, err)}
+        return {"ok": True, "message": "Enregistré, DHCP redémarré avec ces réglages."}
+    return {"ok": True, "message": "Enregistré (DHCP désactivé)."}
+
+
+def dhcp_enable(cfg, force):
+    r = dhcp_save(cfg)
+    if not r["ok"]:
+        return r
+    code, out, err = run(["/usr/local/bin/pretendo", "dhcp", "on"] + (["--force"] if force else []), timeout=180)
+    if code:
+        m = re.search(r"répond sur ce réseau \(([^)]*)\)", err + out)
+        return {"ok": False, "error": _err(out, err), "other_dhcp": m.group(1) if m else ""}
+    return {"ok": True, "message": "DHCP activé."}
+
+
+def dhcp_disable():
+    code, out, err = run(["/usr/local/bin/pretendo", "dhcp", "off"], timeout=120)
+    return {"ok": code == 0, "message": "DHCP désactivé.", "error": _err(out, err) if code else ""}
+
+
+def dhcp_reservation(body):
+    mac = str(body.get("mac", "")).strip()
+    if body.get("delete"):
+        cmd = ["/usr/local/bin/pretendo", "dhcp", "forget", mac]
+    else:
+        cmd = ["/usr/local/bin/pretendo", "dhcp", "reserve", mac, str(body.get("ip", "")).strip(), str(body.get("name", "")).strip()[:40]]
+    code, out, err = run(cmd, timeout=30)
+    return {"ok": code == 0, "error": _err(out, err) if code else ""}
+
+
 def load_password():
     with open(PASSWORD_FILE) as fh:
         return fh.read().strip()
@@ -567,7 +630,7 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
 <header><h1>Pretendo LAN</h1><nav>
 <button data-t="svc" class="on">Services</button><button data-t="cnx">Connexions</button>
 <button data-t="log">Logs</button><button data-t="acc">Comptes</button><button data-t="mail">Mails</button>
-<button data-t="cert">Clés &amp; certificats</button></nav><span id="msg"></span></header>
+<button data-t="cert">Clés &amp; certificats</button><button data-t="dhcp">DHCP</button></nav><span id="msg"></span></header>
 <main>
 <section id="svc" class="on">
  <div class="kpis" id="kpis"></div>
@@ -635,6 +698,26 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
  <p class="mut">Wii U : <code>boss_keys.bin</code> (racine de la SD après l'outil d'extraction). 3DS : <code>aes_keys.txt</code> (GodMode9).
  Les clés sont communes à toutes les consoles : un seul import suffit. Elles ne servent qu'à chiffrer du nouveau contenu SpotPass ; elles ne sont jamais affichées.</p>
  <pre id="bossout" style="display:none"></pre></div>
+</section>
+<section id="dhcp">
+ <div class="card"><div class="row"><b>Serveur DHCP des consoles</b><span id="dhcpstate"></span></div>
+ <p class="mut">Distribue les adresses IP aux Wii U, 3DS et autres machines, avec le DNS de ce serveur : rien à régler sur les consoles.
+ À n'activer que sur un réseau <b>sans autre DHCP</b> (box ou routeur) : deux DHCP se disputeraient les machines. L'activation est refusée si un autre DHCP répond.</p>
+ <div class="row"><label>Sous-réseau <input id="d_subnet" size="15"></label><label>Masque <input id="d_netmask" size="15"></label>
+ <label>Passerelle <input id="d_gateway" size="15" placeholder="aucune"></label><span class="mut" id="d_dns"></span></div>
+ <div class="row"><label>Première adresse <input id="d_range_start" size="15"></label><label>Dernière adresse <input id="d_range_end" size="15"></label>
+ <span id="d_count" class="mut"></span><label>Durée du bail (heures) <input id="d_lease_hours" type="number" min="1" max="8760" style="width:90px"></label></div>
+ <div class="row"><label>Réservation automatique à la première connexion <select id="d_reserve"><option value="all">toutes les machines</option>
+ <option value="nintendo">Wii U et 3DS seulement (adresses MAC Nintendo)</option></select></label></div>
+ <div class="row"><button class="act" onclick="dhcpSave()">Enregistrer</button><button class="act" id="d_on" onclick="dhcpOn()">Activer le DHCP</button>
+ <button class="act warn" id="d_off" onclick="dhcpOff()">Désactiver le DHCP</button><span id="dhcpmsg" class="mut"></span></div>
+ <p class="mut">Chaque machine garde l'adresse reçue à sa première connexion (réservation permanente, modifiable ci-dessous). La plage doit éviter l'IP du serveur et celle du test NAT.</p></div>
+ <div class="card"><div class="row"><b>Réservations</b><span class="mut" id="rescount"></span></div>
+ <table><thead><tr><th>Adresse MAC</th><th>IP</th><th>Nom</th><th>Type</th><th>Première connexion (UTC)</th><th>Bail jusqu'au (UTC)</th><th></th></tr></thead><tbody id="resb"></tbody></table>
+ <div class="row" style="margin-top:12px"><input id="r_mac" placeholder="aa:bb:cc:dd:ee:ff" size="17"><input id="r_ip" placeholder="IP" size="15">
+ <input id="r_name" placeholder="nom (facultatif)" maxlength="40"><button class="act" onclick="resSave()">Ajouter ou modifier</button><span class="mut" id="resmsg"></span></div>
+ <p class="mut">Une nouvelle adresse est prise par la console à son prochain bail : éteins-la et rallume-la.</p></div>
+ <div class="card"><b>Baux sans réservation</b><table><thead><tr><th>Adresse MAC</th><th>IP</th><th>Nom de la machine</th><th>Bail jusqu'au (UTC)</th></tr></thead><tbody id="leaseb"></tbody></table></div>
 </section>
 </main>
 <script>
@@ -761,13 +844,51 @@ async function certExport(){const r=await api('/api/cert/export',{method:'POST'}
 async function inkay(){if(!confirm('Recompiler Inkay (1 à 3 min) ? Lance ftpiiu sur la Wii U pour l\'envoi automatique.'))return;
  const o=$('#certout');o.style.display='block';o.textContent='Compilation en cours…';
  const r=await api('/api/inkay',{method:'POST'});o.textContent=r.output;loadCert();}
+const DF=['subnet','netmask','gateway','range_start','range_end','lease_hours','reserve'];
+const ip2n=s=>{const p=String(s).trim().split('.').map(Number);return p.length===4&&p.every(x=>Number.isInteger(x)&&x>=0&&x<256)?((p[0]<<24)>>>0)+(p[1]<<16)+(p[2]<<8)+p[3]:NaN;};
+function dhcpCount(){const n=ip2n($('#d_range_end').value)-ip2n($('#d_range_start').value)+1;
+ $('#d_count').textContent=Number.isFinite(n)&&n>0?`${n} adresses`+(n<window._dmin?` (moins de ${window._dmin})`:''):'';}
+['d_range_start','d_range_end'].forEach(i=>document.getElementById(i).oninput=dhcpCount);
+async function loadDhcp(force){const d=await api('/api/dhcp');const c=d.config;window._dmin=d.min_size;
+ if(force||!window._dhcpForm){window._dhcpForm=1;DF.forEach(f=>$('#d_'+f).value=c[f]??'');dhcpCount();}
+ $('#d_dns').textContent=`DNS donné aux consoles : ${d.server_ip} (ce serveur), interface ${d.interface||'?'} (${d.cidr||'?'})`;
+ $('#dhcpstate').innerHTML=c.enabled?(d.running?'<span class="ok">actif</span>':'<span class="bad">activé, mais le conteneur ne tourne pas</span>'):'<span class="mut">désactivé</span>';
+ $('#d_on').disabled=c.enabled;$('#d_off').disabled=!c.enabled;
+ if(d.errors.length){$('#dhcpmsg').className='bad';$('#dhcpmsg').textContent=d.errors.join(' ; ');}
+ $('#rescount').textContent=`${d.reservations.length} machine(s)`;
+ $('#resb').innerHTML=d.reservations.map(r=>`<tr><td><code>${esc(r.mac)}</code></td><td${r.outside?' class="bad" title="hors du sous-réseau"':''}>${esc(r.ip)}</td>
+ <td>${esc(r.name)}</td><td>${r.nintendo?'Nintendo':'<span class="mut">autre</span>'}</td><td class="mut">${esc(r.first.replace('T',' ').replace('Z',''))}</td>
+ <td class="mut">${esc(r.lease||'–')}</td><td><button class="act" onclick="resEdit('${esc(r.mac)}')">Modifier</button>
+ <button class="act warn" onclick="resDel('${esc(r.mac)}')">Supprimer</button></td></tr>`).join('');
+ window._res=d.reservations;
+ $('#leaseb').innerHTML=d.leases.length?d.leases.map(l=>`<tr><td><code>${esc(l.mac)}</code></td><td>${esc(l.ip)}</td><td>${esc(l.hostname)}</td><td class="mut">${esc(l.expires)}</td></tr>`).join('')
+ :'<tr><td class="mut" colspan="4">aucun</td></tr>';}
+function dhcpForm(){const c={};DF.forEach(f=>c[f]=$('#d_'+f).value.trim());c.lease_hours=Number(c.lease_hours);return c;}
+function dhcpMsg(r){$('#dhcpmsg').className=r.ok?'ok':'bad';$('#dhcpmsg').textContent=r.ok?(r.message||'Enregistré.'):'Échec : '+(r.error||r.output||'?');}
+async function dhcpSave(){const r=await api('/api/dhcp/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:dhcpForm()})});
+ dhcpMsg(r);if(r.ok)loadDhcp(true);}
+async function dhcpOn(){if(!confirm('Activer le DHCP ? Seulement sur un réseau sans autre DHCP (box coupée ou absente).'))return;
+ $('#dhcpmsg').className='mut';$('#dhcpmsg').textContent='Vérification du réseau…';
+ let r=await api('/api/dhcp/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:dhcpForm(),force:false})});
+ if(!r.ok&&r.other_dhcp&&confirm(`Un autre serveur DHCP répond (${r.other_dhcp}). Activer quand même ? Les machines recevront l'adresse de l'un ou de l'autre.`))
+  r=await api('/api/dhcp/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:dhcpForm(),force:true})});
+ dhcpMsg(r);loadDhcp(true);}
+async function dhcpOff(){if(!confirm('Désactiver le DHCP ? Les consoles garderont leur adresse jusqu\'à la fin de leur bail, puis n\'en auront plus.'))return;
+ const r=await api('/api/dhcp/disable',{method:'POST'});dhcpMsg(r);loadDhcp(true);}
+function resEdit(mac){const r=window._res.find(x=>x.mac===mac);$('#r_mac').value=r.mac;$('#r_ip').value=r.ip;$('#r_name').value=r.name;$('#r_ip').focus();}
+async function resSave(){const body={mac:$('#r_mac').value.trim(),ip:$('#r_ip').value.trim(),name:$('#r_name').value.trim()};
+ const r=await api('/api/dhcp/reservation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ $('#resmsg').className=r.ok?'ok':'bad';$('#resmsg').textContent=r.ok?'Enregistré.':'Échec : '+r.error;if(r.ok){['r_mac','r_ip','r_name'].forEach(i=>$('#'+i).value='');loadDhcp();}}
+async function resDel(mac){if(!confirm(`Supprimer la réservation de ${mac} ? À sa prochaine connexion, la machine recevra une adresse libre, réservée à son tour.`))return;
+ const r=await api('/api/dhcp/reservation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac,delete:true})});
+ $('#resmsg').className=r.ok?'ok':'bad';$('#resmsg').textContent=r.ok?'Supprimée.':'Échec : '+r.error;loadDhcp();}
 function showLogs(s){document.querySelector('nav button[data-t=log]').click();$('#lsvc').value=s;loadLogs();}
 async function restart(s){if(!confirm(s==='all'?'Redémarrer tous les services ?':`Redémarrer ${s} ?`))return;
  $('#msg').textContent=`Redémarrage de ${s}…`;try{const r=await api('/api/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:s})});
  $('#msg').textContent=r.ok?`${s} redémarré.`:`Échec : ${r.output}`;}catch(e){$('#msg').textContent='Erreur : '+e.message;}refresh();}
 async function refresh(){try{if(tab==='svc'){const s=await loadSvc();loadKpis(s);}else if(tab==='cnx')await loadCnx();
  else if(tab==='log'){if(!$('#lsvc').options.length)await loadSvc();if($('#lauto').checked||!rawLogs)await loadLogs();}else if(tab==='acc'){await loadAcc();if(!window._agrLoaded){window._agrLoaded=1;await loadAgr();}}
- else if(tab==='mail')await loadMails();else if(tab==='cert'&&!window._certLoaded){window._certLoaded=1;await loadCert();await loadBoss();}}
+ else if(tab==='mail')await loadMails();else if(tab==='dhcp')await loadDhcp();else if(tab==='cert'&&!window._certLoaded){window._certLoaded=1;await loadCert();await loadBoss();}}
  catch(e){$('#msg').textContent='Erreur : '+e.message;}}
 refresh();setInterval(refresh,10000);
 </script></body></html>"""
@@ -838,6 +959,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(cert_info())
         if url.path == "/api/boss":
             return self._send(boss_status())
+        if url.path == "/api/dhcp":
+            return self._send(dhcp_info())
         if url.path in ("/cert/mitmproxy-ca-cert.pem", "/cert/mitmproxy-ca-cert.cer"):
             path = os.path.join(CERT_DIR, os.path.basename(url.path))
             if not os.path.exists(path):
@@ -911,6 +1034,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/cert/export":
             code, out, err = run(["/usr/local/bin/pretendo", "cert", "export"], timeout=60)
             return self._send({"ok": code == 0, "output": out + err})
+        if path == "/api/dhcp/config":
+            return self._send(dhcp_save(body.get("config")))
+        if path == "/api/dhcp/enable":
+            return self._send(dhcp_enable(body.get("config"), body.get("force") is True))
+        if path == "/api/dhcp/disable":
+            return self._send(dhcp_disable())
+        if path == "/api/dhcp/reservation":
+            return self._send(dhcp_reservation(body))
         if path == "/api/inkay":
             code, out, err = run(["/usr/local/bin/pretendo", "inkay"], timeout=1200)
             return self._send({"ok": code == 0, "output": re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\(B", "", out + err)[-4000:]})
