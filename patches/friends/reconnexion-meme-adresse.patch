@@ -1,0 +1,31 @@
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -18,11 +18,14 @@
+ 	go mod download -x
+ 
+ COPY . .
+-# * Pretendo LAN : deux corrections de nex-go, sans lesquelles une console finit vue hors ligne par ses amis.
++# * Pretendo LAN : trois corrections de nex-go, sans lesquelles la liste d'amis affiche un état faux.
+ # * 1. Une reconnexion depuis la même adresse relançait un minuteur sans arrêter le précédent, qui coupait
+ # *    ensuite la nouvelle session.
+ # * 2. Sur un réseau local, les pings reviennent en moins de 8 ms et le délai de renvoi tombait à 0 : les
+ # *    20 renvois partaient d'un coup et la connexion était déclarée morte, jusqu'au redémarrage du serveur.
++# * 3. Une Wii U qui change d'utilisateur se reconnecte souvent depuis la même adresse sans fermer sa session :
++# *    nex-go réutilisait la connexion sans signaler la fin de l'ancienne, et l'ancien compte restait « en ligne »
++# *    pour ses amis jusqu'au redémarrage du serveur. La fin de session est désormais signalée, comme une déconnexion.
+ # * Le cache des modules peut avoir été vidé alors que l'étape « go mod download » reste en cache : on
+ # * retélécharge nex-go ici, sinon go list ne trouve pas son dossier.
+ RUN --mount=type=cache,target=/go/pkg/mod/ \
+@@ -34,9 +37,12 @@
+ 		/tmp/nex-go/prudp_connection.go && \
+ 	sed -i -e '/retransmitTimeBase = int64(rtt.Average()\/time.Millisecond) \/ 8/a if retransmitTimeBase < 100 { retransmitTimeBase = 100 }' \
+ 		/tmp/nex-go/prudp_endpoint.go && \
++	sed -i -e '/^\tconnection.reset()$/i if connection.ConnectionState == StateConnected && connection.PID() != nil { pep.emitConnectionEnded(connection) }' \
++		/tmp/nex-go/prudp_endpoint.go && \
+ 	test "$(grep -c "^pc.stopHeartbeatTimers()$" /tmp/nex-go/prudp_connection.go)" = 1 && \
+ 	test "$(grep -c "^if pc.pingKickTimer != nil { pc.pingKickTimer.Stop() }$" /tmp/nex-go/prudp_connection.go)" = 1 && \
+ 	test "$(grep -c "^if retransmitTimeBase < 100 { retransmitTimeBase = 100 }$" /tmp/nex-go/prudp_endpoint.go)" = 1 && \
++	test "$(grep -c "^if connection.ConnectionState == StateConnected && connection.PID() != nil { pep.emitConnectionEnded(connection) }$" /tmp/nex-go/prudp_endpoint.go)" = 1 && \
+ 	go mod edit -replace github.com/PretendoNetwork/nex-go/v2=/tmp/nex-go
+ RUN --mount=type=cache,target=/go/pkg/mod/ \
+ 	CGO_ENABLED=0 go build -v -o ${app_dir}/build/server -gcflags "all=-N -l" -ldflags "-X 'main.serverBuildString=${build_string}'"

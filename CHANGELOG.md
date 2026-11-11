@@ -1,5 +1,12 @@
 # Journal des modifications
 
+## 1.8.2 (11/11/2026)
+
+**Liste d'amis**
+- Après un changement d'utilisateur sur une Wii U, l'ancien compte pouvait rester affiché « en ligne » pour ses amis jusqu'au redémarrage du serveur d'amis. La console se reconnecte souvent depuis la même adresse sans fermer sa session, et nex-go réutilisait alors la connexion sans signaler la fin de l'ancienne. Elle est désormais signalée comme une déconnexion (`patches/friends/reconnexion-meme-adresse.patch`).
+- Effet visible : une console qui se reconnecte avec le même compte sans s'être déconnectée est brièvement annoncée hors ligne, puis en ligne.
+- Validé sur consoles le 11/11/2026 sur la VM de test : cinq changements d'utilisateur, dont quatre sans déconnexion de la console, liste d'amis correcte sur les deux consoles à chaque fois. Capture réseau à l'appui : avant le correctif, ces mêmes cas laissaient l'ancien compte en ligne.
+
 ## 1.8.1 (11/11/2026)
 
 **Documentation**
