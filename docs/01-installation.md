@@ -12,18 +12,20 @@
 
 Pour vérifier la présence d'AVX sur un processeur x86 : `grep -c avx /proc/cpuinfo` doit afficher un nombre supérieur à 0.
 
-L'installation demande Internet, mais **plus ensuite** : le serveur fonctionne entièrement en local. **Le code des serveurs Pretendo est dans ce dépôt** (`sources/`) : rien n'est cloné depuis GitHub, sauf le serveur Mario Kart 8, dont le code n'a pas de licence permettant de le redistribuer. Restent téléchargés pendant l'installation, comme Docker lui-même :
+L'installation demande Internet, mais **plus ensuite** : le serveur fonctionne entièrement en local. **Le code des serveurs Pretendo est dans ce dépôt** (`sources/`) : la bibliothèque que la construction de Wii U Chat téléchargeait y est aussi. Seul le serveur Mario Kart 8 est cloné, depuis ses copies sur le GitHub du projet : son dépôt d'origine n'a pas de licence permettant de redistribuer son code. Restent téléchargés pendant l'installation, comme Docker lui-même :
 - les images Docker de base (MongoDB, PostgreSQL, Node.js, Go, Python…), depuis Docker Hub et ghcr.io, à des versions figées ;
 - les paquets npm, Go et Python, et les paquets système des images, pendant leur construction, aux versions figées par chaque composant ;
 - le code source d'OpenSSL et de nginx, pour le proxy et le HTTPS des Wii U non modifiées ;
 - le certificat « Nintendo CA - G3 », auprès de Nintendo, pour le SSSL ;
-- le code du serveur Mario Kart 8, depuis GitHub, au commit figé dans `games/mario-kart-8/game.conf`.
+- le code du serveur Mario Kart 8 et de deux de ses bibliothèques, depuis leurs copies sur le GitHub du projet ([github.com/Dr-Wily](https://github.com/Dr-Wily)), au commit figé dans `games/mario-kart-8/game.conf`. Ces copies restent disponibles si les dépôts d'origine disparaissent.
 
 ## Étape 1 : fixer l'IP du serveur
 
 **C'est la cause n°1 d'un serveur qui « devient inaccessible ».** L'IP du serveur est inscrite dans la configuration et dans la base de comptes : si elle change, les consoles ne le trouvent plus.
 
 Le plus simple est de créer, dans l'interface de ta box, une **réservation DHCP** associant l'adresse MAC du serveur à une IP fixe, par exemple `192.168.0.165`. Fais de même pour les consoles : c'est pratique pour l'envoi de fichiers par FTP et pour l'onglet *Connexions* de l'admin.
+
+**Pour un réseau isolé**, sans box ni autre DHCP : installe d'abord le serveur pendant qu'il a Internet, avec une IP fixe dans la configuration réseau de Debian (exemple dans [09-dhcp.md](09-dhcp.md)), puis passe-le sur le réseau isolé. C'est lui qui distribuera alors les adresses aux consoles : onglet *DHCP* de l'interface web, à activer seulement là où aucun autre DHCP ne répond.
 
 Pour connaître l'adresse MAC et l'IP actuelle du serveur :
 
@@ -101,7 +103,7 @@ L'adresse est vérifiée avant d'être utilisée : une adresse occupée ou sur u
 1. **Vérifie la machine** : Debian, architecture, AVX, mémoire, ports libres (53, 80, 443, 8080, 8090, 8888).
 2. **Installe les prérequis**, avec `install-all.sh` seulement : paquets Debian, et Docker depuis son dépôt officiel. `install-server-only.sh` vérifie qu'ils sont là. Les deux activent la rotation des logs Docker et désactivent la mise en veille.
 3. **Copie le code des serveurs depuis `sources/`** : la base pretendo-docker et ses sous-modules (comptes, amis, Juxtaposition, BOSS, mitmproxy, jeux…), sans rien télécharger. Chaque brique devient un dépôt git local, ce que demandent les scripts d'upstream.
-4. **Prépare les modules de jeux** de `games/`, aujourd'hui Mario Kart 8.
+4. **Prépare les modules de jeux** de `games/`, aujourd'hui Mario Kart 8, téléchargé depuis ses copies sur le GitHub du projet.
 5. **Génère le certificat SSSL** : il récupère le « Nintendo CA - G3 » auprès de `account.nintendo.net`, vérifie son empreinte, puis le modifie avec l'outil SSSL de Pretendo.
 6. **Écrit `compose.override.yml`** : versions figées, DNS des consoles, SSSL et jeux.
 7. **Lance `setup.sh` d'upstream** (première installation seulement), qui génère les secrets, construit les images et initialise les bases.

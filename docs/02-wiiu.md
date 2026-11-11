@@ -61,7 +61,7 @@ Deux façons de faire :
 
 Enregistre, fais un **test de connexion**, puis **redémarre la console**.
 
-> Le DNS n'est pas obligatoire avec Inkay, mais il est nécessaire au fonctionnement **sans Internet** et évite toute fuite vers les vrais serveurs. Le test NAT passe par les serveurs publics de Pretendo (voir le dépannage, erreur 118-0203).
+> Le DNS n'est pas obligatoire avec Inkay, mais il est nécessaire au fonctionnement **sans Internet** et évite toute fuite vers les vrais serveurs. Le test NAT est servi par le serveur s'il a une seconde IP ([01-installation.md](01-installation.md#seconde-ip-du-test-nat)) ; sans elle, il passe par les serveurs publics de Pretendo et demande Internet (voir le dépannage, erreur 118-0203).
 
 ### A4. Vérifier
 

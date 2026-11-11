@@ -1,5 +1,12 @@
 # Journal des modifications
 
+## 1.8.1 (11/11/2026)
+
+**Documentation**
+- Installation (`docs/01-installation.md`) et README : le serveur Mario Kart 8 et deux de ses bibliothèques sont téléchargés depuis leurs copies sur le GitHub du projet ; la bibliothèque de Wii U Chat est dans le dépôt ; sur un réseau isolé, installation avec Internet et IP fixe dans Debian, puis DHCP fourni par le serveur.
+- README et connexion des Wii U (`docs/02-wiiu.md`) : le test NAT est servi en local avec une seconde IP ; ils disaient encore qu'il passait toujours par les serveurs publics de Pretendo.
+- Aucun changement de code : un serveur en 1.8.0 n'a rien à réinstaller.
+
 ## 1.8.0 (10/11/2026)
 
 **DHCP des consoles** (`docs/09-dhcp.md`)
