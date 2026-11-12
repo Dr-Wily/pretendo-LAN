@@ -12,12 +12,13 @@ Le projet s'appuie sur [MatthewL246/pretendo-docker](https://github.com/MatthewL
 | 📶 **Hors ligne** | DNS local pour les consoles, test de connexion de la Wii U et liens des mails servis en local. La création de PNID est prévue pour fonctionner sans Internet (images de Mii de repli). Test NAT des consoles servi en local, sur une seconde IP du serveur (sans elle, il passe par les serveurs publics de Pretendo et demande Internet) |
 | 🌐 **Site web** | Inscription d'un PNID, compte et Mii depuis un PC, sur `http://IP:8888`, sans réglage sur le PC |
 | 🎮 **Wii U non modifiées** | SSSL configuré automatiquement : rien à installer sur la console |
-| 🖥️ **Administration web** | Services, connexions des consoles, logs, comptes, mails, certificats, clés SpotPass |
+| 🖥️ **Administration web** | Services, connexions des consoles, logs, comptes, mails, certificats, clés SpotPass, DHCP, rotation de Splatoon |
+| 🦑 **Splatoon** | Rotation des stages fabriquée sur le serveur (créneaux de 2 h, renouvelée chaque nuit, changeable à la main) et fichier Splatfest, sans contenu de Nintendo : le mode en ligne s'ouvre |
 | 💾 **Pérennité** | Sauvegarde nocturne automatique, restauration et migration de machine en une commande |
 | 🔄 **Mises à jour** | Brique par brique, avec sauvegarde préalable et retour arrière automatique |
 | 🧩 **Extensible** | Chaque serveur de jeu est un module (`games/<jeu>/`) |
 
-> ⚠️ Projet communautaire non affilié à Nintendo ni à Pretendo Network. Aucune clé ou donnée Nintendo n'est distribuée : les clés optionnelles (SpotPass) proviennent de ta propre console.
+> ⚠️ Projet communautaire non affilié à Nintendo ni à Pretendo Network. Aucune clé ou donnée Nintendo n'est distribuée : les clés optionnelles (SpotPass) proviennent de ta propre console. Les fichiers SpotPass de Splatoon livrés (`splatoon/`) sont fabriqués par le projet : ils ne contiennent rien de Nintendo, et leur version chiffrée ne révèle pas les clés.
 
 ## Démarrage rapide
 
@@ -69,10 +70,11 @@ Il reste ensuite à :
 | Liste d'amis | ✅ | ✅ | ✅ (non testé ici) |
 | Mario Kart 8 en ligne | ✅ testé | ✅ attendu | – |
 | Tournois de Mario Kart 8 | ✅ attendu | ✅ testé (création, recherche, classement) | – |
-| Splatoon, Super Mario Maker, Minecraft, Pikmin 3, Wii U Chat | ✅ fournis par upstream | ✅ attendu | – |
+| Splatoon : mode en ligne, rotation des stages (SpotPass) | ✅ attendu | ✅ testé (Wii U européennes : rotation annoncée, salon entre deux consoles) | – |
+| Super Mario Maker, Minecraft, Pikmin 3, Wii U Chat | ✅ fournis par upstream | ✅ attendu | – |
 | Miiverse (Juxtaposition) | ✅ | ❌ (navigateur intégré) | partiel |
 | Paramètres de l'identifiant sur la console (pays, région…) | ✅ attendu | ❌ erreur 120-1819 (navigateur intégré) : onglet *Comptes* de l'admin | – |
-| SpotPass | serveur prêt, contenu à fournir | idem | idem |
+| SpotPass | Splatoon (rotation, Splatfest) ; autres jeux : contenu à fournir | idem | contenu à fournir |
 | eShop | ❌ (non fourni par Pretendo) | ❌ | ❌ |
 
 ## Crédits

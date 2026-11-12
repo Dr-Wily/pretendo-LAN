@@ -1,5 +1,17 @@
 # Journal des modifications
 
+## 1.9.0 (12/11/2026)
+
+**Splatoon : mode en ligne et rotation des stages** (`docs/04-administration.md`)
+- Splatoon refusait le mode en ligne (erreur 104-0265) : il télécharge d'abord par SpotPass la rotation des stages (`VSSetting.byaml`, tâche `schdat2`) et le fichier Splatfest (`Festival.byaml`, tâche `optdat2`), et le serveur BOSS n'avait rien à servir. Ces deux fichiers sont désormais fabriqués par Pretendo LAN, sans contenu de Nintendo, et servis par BOSS depuis `config/boss-cdn` (monté dans son conteneur).
+- Rotation fabriquée par [splatoon-Rotationator-python](https://github.com/Dr-Wily/splatoon-Rotationator-python) (`sources/splatoon-rotation`, `sources/EXTRAS.tsv`), portage en Python de Rotationator, avec les mêmes règles de tirage. Créneaux de 2 h par défaut (1 ou 4 h au choix), 256 créneaux au plus.
+- **Avec les clés BOSS Wii U** : rotation neuve, générée et chiffrée sur le serveur, prolongée chaque nuit à 5 h sans changer les créneaux déjà annoncés. **Sans clés** : rotation livrée, déjà chiffrée (`splatoon/`), figée à la fin de son planning. Fichier Splatfest livré dans les deux cas : un Splatfest terminé en 2016, rien n'est annoncé ni joué.
+- Onglet *Splatoon* de l'interface web : rotation en service, 12 prochains créneaux, **nouvelle rotation dès maintenant** (durée des créneaux, stages et mode du premier créneau), régions servies. Commande `pretendo rotation`. Rotation et fichiers servis inclus dans la sauvegarde.
+- Régions : Europe, États-Unis et Japon servies, avec les mêmes fichiers. Seule l'Europe a été essayée sur console.
+- Mise au point sur la VM de test, 11 et 12/11/2026, avec des Wii U européennes : rotation de 2 h annoncée par le jeu et changement de créneau à l'heure prévue, salon rejoint entre deux consoles, fichier Splatfest accepté sans les deux images de la tâche d'origine. Un premier fichier Splatfest, raccourci, a été refusé (retour au hall) et une sauvegarde a ensuite été effacée par le jeu : le fichier livré garde la structure d'un fichier de 2016, et ses octets sont figés par un test.
+- Validé sur consoles le 12/11/2026 sur la VM de test, version installée, deux Wii U européennes : rotation générée sur le serveur annoncée par le jeu, salon commun ; nouvelle rotation publiée depuis l'onglet *Splatoon*, prise en compte au relancement du jeu. Vérifié dans les journaux : chaque console télécharge la rotation et le fichier Splatfest, puis la nouvelle rotation sous un numéro plus grand.
+- Une console qui n'a pas relancé le jeu garde l'ancienne rotation, et peut rejoindre un salon avec une console qui a la nouvelle.
+
 ## 1.8.2 (11/11/2026)
 
 **Liste d'amis**

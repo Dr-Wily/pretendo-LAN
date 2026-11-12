@@ -599,6 +599,46 @@ def dhcp_reservation(body):
     return {"ok": code == 0, "error": _err(out, err) if code else ""}
 
 
+SPLATOON_TOOL = "/usr/local/bin/pretendo-splatoon"
+GACHI_RULES = ("cVar", "cVlf", "cVgl")
+
+
+def splatoon_status():
+    code, out, err = run([SPLATOON_TOOL, "status", "--json"], timeout=40)
+    if code:
+        return {"error": _err(out, err)}
+    return json.loads(out)
+
+
+def splatoon_new(body):
+    """Nouvelle rotation dès maintenant ; stages et mode du premier créneau facultatifs (-1 : au hasard)."""
+    hours = body.get("hours")
+    if type(hours) is not int or hours not in (1, 2, 4):
+        return {"ok": False, "error": "durée de créneau : 1, 2 ou 4 heures"}
+    cmd = ["/usr/local/bin/pretendo", "rotation", "new", "--hours=%d" % hours]
+    for key in ("regular", "gachi"):
+        stages = body.get(key) or []
+        if not isinstance(stages, list) or len(stages) > 2 or any(type(s) is not int or not -1 <= s <= 15 for s in stages):
+            return {"ok": False, "error": "stages invalides"}
+        if any(s != -1 for s in stages):
+            cmd.append("--%s=%s" % (key, ",".join(map(str, stages))))
+    rule = body.get("rule") or ""
+    if rule:
+        if rule not in GACHI_RULES:
+            return {"ok": False, "error": "mode pro invalide"}
+        cmd.append("--rule=" + rule)
+    code, out, err = run(cmd, timeout=180)
+    return {"ok": code == 0, "output": (out + err).strip(), "error": _err(out, err) if code else ""}
+
+
+def splatoon_regions(body):
+    regions = body.get("regions")
+    if not isinstance(regions, list) or not regions or any(r not in ("EUR", "USA", "JPN") for r in regions):
+        return {"ok": False, "error": "régions invalides"}
+    code, out, err = run(["/usr/local/bin/pretendo", "rotation", "regions"] + regions, timeout=180)
+    return {"ok": code == 0, "output": (out + err).strip(), "error": _err(out, err) if code else ""}
+
+
 def load_password():
     with open(PASSWORD_FILE) as fh:
         return fh.read().strip()
@@ -630,7 +670,7 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
 <header><h1>Pretendo LAN</h1><nav>
 <button data-t="svc" class="on">Services</button><button data-t="cnx">Connexions</button>
 <button data-t="log">Logs</button><button data-t="acc">Comptes</button><button data-t="mail">Mails</button>
-<button data-t="cert">Clés &amp; certificats</button><button data-t="dhcp">DHCP</button></nav><span id="msg"></span></header>
+<button data-t="cert">Clés &amp; certificats</button><button data-t="dhcp">DHCP</button><button data-t="spl">Splatoon</button></nav><span id="msg"></span></header>
 <main>
 <section id="svc" class="on">
  <div class="kpis" id="kpis"></div>
@@ -718,6 +758,26 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
  <input id="r_name" placeholder="nom (facultatif)" maxlength="40"><button class="act" onclick="resSave()">Ajouter ou modifier</button><span class="mut" id="resmsg"></span></div>
  <p class="mut">Une nouvelle adresse est prise par la console à son prochain bail : éteins-la et rallume-la.</p></div>
  <div class="card"><b>Baux sans réservation</b><table><thead><tr><th>Adresse MAC</th><th>IP</th><th>Nom de la machine</th><th>Bail jusqu'au (UTC)</th></tr></thead><tbody id="leaseb"></tbody></table></div>
+</section>
+<section id="spl">
+ <div class="card"><div class="row"><b>Splatoon : rotation des stages (SpotPass)</b><span id="splstate"></span>
+ <span style="flex:1"></span><button class="act" onclick="loadSpl()">Rafraîchir</button></div>
+ <table><tbody id="splinfo"></tbody></table>
+ <p class="mut">Le jeu télécharge la rotation et le fichier Splatfest à son lancement : sans eux, pas de mode en ligne (erreur 104-0265).
+ Une nouvelle rotation est prise par chaque console au prochain lancement de Splatoon ; tant qu'une console n'a pas relancé le jeu, elle garde l'ancienne.</p></div>
+ <div class="card"><b>Créneaux</b> <span class="mut">(heure de ce navigateur)</span>
+ <table><thead><tr><th>Début</th><th>Durée</th><th>Match classique : Guerre de territoire</th><th>Match pro</th><th></th></tr></thead><tbody id="splslots"></tbody></table></div>
+ <div class="card"><b>Nouvelle rotation, à partir de maintenant</b>
+ <p class="mut" id="splnokey" style="display:none">Il faut les clés BOSS de la Wii U (onglet <i>Clés &amp; certificats</i>) : sans elles, la rotation livrée avec Pretendo LAN est servie, et elle se fige au bout de son planning.</p>
+ <div id="splform"><div class="row" style="margin-top:10px"><label>Durée des créneaux <select id="s_hours"></select></label></div>
+ <div class="row"><span>Premier créneau, facultatif :</span><label>classique <select id="s_r1"></select> <select id="s_r2"></select></label>
+ <label>pro <select id="s_rule"></select> <select id="s_g1"></select> <select id="s_g2"></select></label></div>
+ <div class="row"><button class="act" onclick="splNew()">Générer et publier</button><span id="splmsg" class="mut"></span></div>
+ <p class="mut">Les créneaux suivants sont tirés selon les règles du jeu : 4 stages différents par créneau, aucun stage du créneau précédent, mode pro différent à chaque créneau.
+ La rotation couvre 256 créneaux au plus (21 jours en créneaux de 2 h, 10 jours en créneaux d'1 h) et se prolonge chaque nuit à 5 h sans changer les créneaux déjà annoncés.</p></div>
+ <pre id="splout" style="display:none"></pre></div>
+ <div class="card"><b>Régions servies</b><div class="row" style="margin-top:10px" id="splreg"></div>
+ <p class="mut">Chaque région de Splatoon a sa propre tâche SpotPass. Toutes reçoivent les mêmes fichiers. Europe : validée sur consoles. États-Unis et Japon : non essayés sur console, à essayer d'abord avec un compte jetable.</p></div>
 </section>
 </main>
 <script>
@@ -882,13 +942,50 @@ async function resSave(){const body={mac:$('#r_mac').value.trim(),ip:$('#r_ip').
 async function resDel(mac){if(!confirm(`Supprimer la réservation de ${mac} ? À sa prochaine connexion, la machine recevra une adresse libre, réservée à son tour.`))return;
  const r=await api('/api/dhcp/reservation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac,delete:true})});
  $('#resmsg').className=r.ok?'ok':'bad';$('#resmsg').textContent=r.ok?'Supprimée.':'Échec : '+r.error;loadDhcp();}
+const REGION_NAMES={EUR:'Europe',USA:'États-Unis',JPN:'Japon'};
+const fdate=t=>new Date(t).toLocaleString('fr-FR',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+async function loadSpl(){const d=await api('/api/splatoon');
+ if(d.error){$('#splstate').innerHTML=`<span class="bad">${esc(d.error)}</span>`;return;}
+ const S=d.stages,R=d.rules,r=d.rotation,f=d.festival,st=a=>a.map(i=>esc(S[i])).join(', ');
+ $('#splstate').innerHTML=d.keys?'<span class="ok">clés BOSS présentes : rotation neuve, prolongée chaque nuit</span>':'<span class="mut">sans clés BOSS : rotation livrée avec Pretendo LAN</span>';
+ $('#splinfo').innerHTML=r?[['Rotation',`${r.source==='générée'?'générée sur ce serveur':'livrée avec Pretendo LAN'}, créneaux de ${esc(r.phase_hours||'?')} h, DataId ${esc(r.data_id)}, publiée le ${esc(fdate(r.published_at))}`],
+  ['Planning',r.frozen?`<span class="bad">terminé : rotation figée depuis le ${esc(fdate(r.frozen_from))} (dernier créneau de 10 ans)</span>`:`jusqu'au ${esc(fdate(r.frozen_from))}, puis dernier créneau figé`+(d.keys?' (prolongé chaque nuit)':'')],
+  ['Splatfest',f?`aucun Splatfest en cours (fichier livré, DataId ${esc(f.data_id)})`:'<span class="bad">non publié</span>'],
+  ['Régions',d.regions.map(x=>esc(REGION_NAMES[x]||x)).join(', ')]].map(([k,v])=>`<tr><th>${k}</th><td style="white-space:normal">${v}</td></tr>`).join('')
+  :'<tr><td class="bad">aucune rotation publiée : sudo pretendo rotation apply</td></tr>';
+ $('#splslots').innerHTML=r?r.slots.map(s=>`<tr${s.current?' style="font-weight:600"':''}><td>${esc(fdate(s.start))}</td><td>${s.hours?esc(s.hours)+' h':'figé'}</td>
+  <td>${st(s.regular)}</td><td>${esc(R[s.rule]||s.rule)} : ${st(s.gachi)}</td><td class="ok">${s.current?'en cours':''}</td></tr>`).join(''):'';
+ $('#splnokey').style.display=d.keys?'none':'block';$('#splform').style.display=d.keys?'block':'none';
+ if(!window._splForm){window._splForm=1;
+  $('#s_hours').innerHTML=d.phase_choices.map(h=>`<option value="${h}"${h===d.phase_hours?' selected':''}>${h} h</option>`).join('');
+  const so='<option value="-1">au hasard</option>'+S.map((n,i)=>`<option value="${i}">${esc(n)}</option>`).join('');
+  ['s_r1','s_r2','s_g1','s_g2'].forEach(i=>$('#'+i).innerHTML=so);
+  $('#s_rule').innerHTML='<option value="">mode au hasard</option>'+['cVar','cVlf','cVgl'].map(k=>`<option value="${k}">${esc(R[k])}</option>`).join('');
+  $('#s_rule').onchange=splBanned;}
+ window._splBanned=d.banned;splBanned();
+ $('#splreg').innerHTML=d.all_regions.map(x=>`<label><input type="checkbox" class="sreg" value="${x}"${d.regions.includes(x)?' checked':''}> ${esc(REGION_NAMES[x]||x)}</label>`).join(' ')
+  +' <button class="act" onclick="splRegions()">Enregistrer</button>';}
+function splBanned(){const b=(window._splBanned||{})[$('#s_rule').value]||[];
+ ['s_g1','s_g2'].forEach(i=>{[...$('#'+i).options].forEach(o=>{o.disabled=b.includes(Number(o.value));if(o.disabled&&o.selected)$('#'+i).value='-1';});});}
+function splOut(r){const o=$('#splout');o.style.display='block';o.textContent=r.output||r.error||'';
+ $('#splmsg').className=r.ok?'ok':'bad';$('#splmsg').textContent=r.ok?'Publiée.':'Échec : '+(r.error||'?');}
+async function splNew(){const v=i=>Number($('#'+i).value);
+ if(!confirm('Remplacer la rotation en service par une nouvelle, à partir de maintenant ? Les consoles la prennent au prochain lancement de Splatoon.'))return;
+ $('#splmsg').className='mut';$('#splmsg').textContent='Génération et chiffrement…';
+ const body={hours:v('s_hours'),regular:[v('s_r1'),v('s_r2')],rule:$('#s_rule').value,gachi:[v('s_g1'),v('s_g2')]};
+ splOut(await api('/api/splatoon/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));loadSpl();}
+async function splRegions(){const regions=[...document.querySelectorAll('.sreg:checked')].map(c=>c.value);
+ if(!regions.length){alert('Au moins une région.');return;}
+ if(regions.some(x=>x!=='EUR')&&!confirm('Les régions États-Unis et Japon n\'ont pas été essayées sur console. Un fichier refusé par le jeu peut effacer la sauvegarde : essaie d\'abord avec un compte jetable. Continuer ?'))return;
+ splOut(await api('/api/splatoon/regions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regions})}));loadSpl();}
 function showLogs(s){document.querySelector('nav button[data-t=log]').click();$('#lsvc').value=s;loadLogs();}
 async function restart(s){if(!confirm(s==='all'?'Redémarrer tous les services ?':`Redémarrer ${s} ?`))return;
  $('#msg').textContent=`Redémarrage de ${s}…`;try{const r=await api('/api/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:s})});
  $('#msg').textContent=r.ok?`${s} redémarré.`:`Échec : ${r.output}`;}catch(e){$('#msg').textContent='Erreur : '+e.message;}refresh();}
 async function refresh(){try{if(tab==='svc'){const s=await loadSvc();loadKpis(s);}else if(tab==='cnx')await loadCnx();
  else if(tab==='log'){if(!$('#lsvc').options.length)await loadSvc();if($('#lauto').checked||!rawLogs)await loadLogs();}else if(tab==='acc'){await loadAcc();if(!window._agrLoaded){window._agrLoaded=1;await loadAgr();}}
- else if(tab==='mail')await loadMails();else if(tab==='dhcp')await loadDhcp();else if(tab==='cert'&&!window._certLoaded){window._certLoaded=1;await loadCert();await loadBoss();}}
+ else if(tab==='mail')await loadMails();else if(tab==='dhcp')await loadDhcp();else if(tab==='cert'&&!window._certLoaded){window._certLoaded=1;await loadCert();await loadBoss();}
+ else if(tab==='spl'&&!window._splLoaded){window._splLoaded=1;await loadSpl();}}
  catch(e){$('#msg').textContent='Erreur : '+e.message;}}
 refresh();setInterval(refresh,10000);
 </script></body></html>"""
@@ -961,6 +1058,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(boss_status())
         if url.path == "/api/dhcp":
             return self._send(dhcp_info())
+        if url.path == "/api/splatoon":
+            return self._send(splatoon_status())
         if url.path in ("/cert/mitmproxy-ca-cert.pem", "/cert/mitmproxy-ca-cert.cer"):
             path = os.path.join(CERT_DIR, os.path.basename(url.path))
             if not os.path.exists(path):
@@ -1042,6 +1141,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(dhcp_disable())
         if path == "/api/dhcp/reservation":
             return self._send(dhcp_reservation(body))
+        if path == "/api/splatoon/new":
+            return self._send(splatoon_new(body))
+        if path == "/api/splatoon/regions":
+            return self._send(splatoon_regions(body))
         if path == "/api/inkay":
             code, out, err = run(["/usr/local/bin/pretendo", "inkay"], timeout=1200)
             return self._send({"ok": code == 0, "output": re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\(B", "", out + err)[-4000:]})

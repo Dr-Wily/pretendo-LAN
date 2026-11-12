@@ -21,6 +21,8 @@ Deux outils, qui font la même chose :
 | **Comptes** | PNID : PID, nom, Mii, **en ligne ou non, sur quelle console (Wii U ou 3DS) et dans quel jeu**, e-mail, activé ou non, date de création. Bouton **Détails** (dernière connexion, date de naissance, pays, région, fuseau horaire, consoles liées, niveaux d'accès…), avec le **changement de pays, de région et de fuseau horaire**. Bouton **Activer** pour un compte dont l'e-mail n'est pas validé. **Textes de l'inscription** affichés par la console (titres, textes et boutons, par langue) |
 | **Mails** | Mails envoyés par le serveur de comptes (confirmation, mot de passe…), en texte et en HTML. Les liens s'ouvrent dans un nouvel onglet. Bouton **Ouvrir via le serveur local** pour les liens Pretendo d'anciens mails, qui fonctionne hors ligne |
 | **Clés & certificats** | Certificat mitmproxy (expiration, correspondance avec Inkay, téléchargement, recompilation et envoi d'Inkay), état du SSSL, **clés SpotPass** (état, import de fichier, récupération FTP) |
+| **DHCP** | Serveur DHCP des consoles, voir [09-dhcp.md](09-dhcp.md) |
+| **Splatoon** | **Rotation des stages** en service et prochains créneaux, **nouvelle rotation** dès maintenant (durée des créneaux, stages et mode du premier créneau), régions servies (voir plus bas) |
 
 « En ligne » veut dire connecté au serveur d'amis : la console est allumée et en ligne. Le jeu affiché est celui que la console annonce à ses amis ; dans le menu de la console, c'est « Menu Wii U » ou « Menu HOME ».
 
@@ -51,6 +53,7 @@ Les actions qui modifient quelque chose (redémarrage, import, activation…) de
 | `cert status`, `cert export`, `cert restore [dossier]` | état, copie ou restauration du certificat mitmproxy |
 | `inkay` | recompile Inkay avec le certificat actif et l'envoie à la Wii U par FTP |
 | `boss-keys [status\|ftp\|fichier…]` | clés SpotPass (voir plus bas) |
+| `rotation [status\|new\|renew\|apply\|regions]` | rotation des stages de Splatoon (voir plus bas) |
 | `versions`, `update`, `rollback`, `upgrade` | mises à jour, voir [05-maintenance.md](05-maintenance.md) |
 | `change-ip <IP>` | bascule toute la configuration sur une nouvelle IP |
 | `nat-ip [<IP>\|off]` | affiche, définit ou retire la seconde IP du test NAT local (voir [01-installation.md](01-installation.md)) |
@@ -87,7 +90,7 @@ Les deux sont inclus dans chaque sauvegarde.
 
 ## Clés SpotPass (BOSS)
 
-- **Utilité** : elles ne servent qu'à **chiffrer du nouveau contenu SpotPass**. Le serveur BOSS fonctionne sans elles, mais une installation neuve n'a de toute façon aucun contenu à distribuer.
+- **Utilité** : elles ne servent qu'à **chiffrer du nouveau contenu SpotPass**, aujourd'hui la rotation des stages de Splatoon (voir ci-dessous). Le serveur BOSS fonctionne sans elles. Les consoles n'en ont pas besoin : chacune possède déjà ces clés.
 - **Une seule extraction suffit** : ces clés sont **communes** à toutes les Wii U et à toutes les 3DS. **Ne les publie pas.**
 - **Extraction (console modifiée)** :
   - **Wii U** : *BetterKeyDumper* de Pretendo (sous Aroma, aucune version compilée publiée : il faut le compiler avec wut et libmocha) ou *Full Key Dumper* (sous Tiramisu). Ils écrivent `SD:/boss_keys.bin`.
@@ -95,7 +98,30 @@ Les deux sont inclus dans chaque sauvegarde.
 - **Import** :
   - interface web, onglet *Clés & certificats* : **Importer le fichier**, ou **Récupérer depuis la Wii U (FTP)** avec ftpiiu lancé ;
   - en ligne de commande : `sudo pretendo boss-keys ftp` ou `sudo pretendo boss-keys /chemin/boss_keys.bin`.
-- **Ce que fait l'import** : il vérifie chaque clé par empreinte MD5, les enregistre dans la configuration de BOSS **sans toucher aux autres secrets** et redémarre BOSS. Un fichier invalide est refusé puis supprimé.
+- **Ce que fait l'import** : il vérifie chaque clé par empreinte MD5, les enregistre dans la configuration de BOSS **sans toucher aux autres secrets** et redémarre BOSS. Un fichier invalide est refusé puis supprimé. Après l'import des clés Wii U, une rotation de Splatoon neuve est publiée.
+
+## Splatoon : rotation des stages
+
+Avant d'ouvrir le mode en ligne, Splatoon télécharge par SpotPass deux fichiers, servis par le serveur BOSS. Sans eux, il affiche l'erreur 104-0265.
+
+- `VSSetting.byaml` (tâche `schdat2`) : la **rotation**, c'est-à-dire, pour chaque créneau, les 2 stages du Match classique (Guerre de territoire), le mode du Match pro et ses 2 stages.
+- `Festival.byaml` (tâche `optdat2`) : le **Splatfest**. Le fichier livré annonce un Splatfest terminé en 2016 : rien n'est annoncé ni joué, et le mode en ligne s'ouvre.
+
+Pretendo LAN fabrique ces fichiers lui-même, sans contenu de Nintendo, avec [splatoon-Rotationator-python](https://github.com/Dr-Wily/splatoon-Rotationator-python), un portage de Rotationator (l'outil qu'utilise Pretendo).
+
+| | Avec les clés BOSS Wii U | Sans clés |
+|---|---|---|
+| Rotation | **neuve**, générée et chiffrée sur ce serveur (les clés ne quittent pas le conteneur BOSS) | **livrée** avec Pretendo LAN, déjà chiffrée (`splatoon/`) |
+| Renouvellement | **chaque nuit à 5 h** : la rotation est prolongée sans changer les créneaux déjà annoncés | aucun : à la fin de son planning, la rotation reste **figée** sur son dernier créneau |
+| Nouvelle rotation à la main | oui, onglet *Splatoon* ou `sudo pretendo rotation new` | non |
+
+- **Règles de tirage**, celles du jeu et de Rotationator : 4 stages différents par créneau, aucun stage du créneau précédent, mode pro différent à chaque créneau, stages exclus de certains modes. 256 créneaux au plus : **21 jours en créneaux de 2 h** (le réglage par défaut), 10 jours en créneaux d'1 h, 42 jours en créneaux de 4 h. Le dernier créneau dure 10 ans, en filet de sécurité.
+- **Nouvelle rotation** : onglet *Splatoon*, **Générer et publier**. Elle commence à l'heure en cours. On peut imposer les stages et le mode du premier créneau ; les suivants sont tirés au hasard. En ligne de commande : `sudo pretendo rotation new --hours 2 --regular=4,8 --rule=cVar --gachi=13,15`. Numéros et noms des stages : `sudo pretendo rotation status`, ou les listes de l'onglet.
+- **Quand les consoles la voient** : au prochain lancement de Splatoon. Une console qui n'a pas relancé le jeu garde l'ancienne rotation. Chaque publication prend un numéro (DataId) plus grand que les précédents : la console garde toujours le fichier au plus grand numéro.
+- **Régions** : chaque région de Splatoon a sa propre tâche SpotPass. Les trois sont servies par défaut, avec les mêmes fichiers. **Seule l'Europe a été essayée sur console** : avec une Wii U américaine ou japonaise, essaie d'abord avec un compte jetable (voir ci-dessous). Choix des régions : onglet *Splatoon*, ou `sudo pretendo rotation regions EUR USA JPN`.
+- **Fichiers** : fichiers servis dans `/opt/pretendo/config/boss-cdn/` (monté dans le conteneur BOSS), rotation en service et état dans `/opt/pretendo/config/splatoon/`. Les deux font partie de la sauvegarde.
+
+> ⚠️ Un fichier SpotPass que le jeu refuse peut **effacer la sauvegarde de Splatoon** de la console : c'est arrivé pendant la mise au point, avec un fichier Splatfest raccourci. Les fichiers livrés sont ceux qu'ont acceptés des Wii U réelles. Tout autre fichier s'essaie d'abord avec un **compte jetable**.
 
 ## Miiverse : créer une communauté
 

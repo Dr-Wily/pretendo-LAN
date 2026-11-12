@@ -464,6 +464,11 @@ services:
       PN_LAN_AGREEMENTS_FILE: /pretendo-lan/accords/accords-inscription.json
     volumes:
       - ./config/accords:/pretendo-lan/accords:ro
+  boss:
+    volumes:
+      # fichiers SpotPass servis (tâches et contenu chiffré), écrits par pretendo-splatoon :
+      # rotation des stages et fichier Splatfest de Splatoon
+      - ./config/boss-cdn:/home/node/app/cdn:ro
 EOF
 # Serveurs Go d'upstream : lancés directement, sans le débogueur Delve. Sous Delve, un
 # plantage (ex. course au démarrage du serveur d'amis, register_common_authentication_
@@ -551,6 +556,9 @@ done
 [[ -f config/public-lan.Corefile ]] || install -m 644 config/public.Corefile config/public-lan.Corefile
 # textes d'accord de l'inscription : vide tant que l'interface web n'a rien enregistré (textes d'origine)
 install -d -m 755 config/accords
+# SpotPass de Splatoon : fichiers servis par BOSS (remplis par « pretendo rotation apply ») et état
+install -d -m 755 config/boss-cdn
+install -d -m 700 config/splatoon
 
 # ----------------------------------------------------------------------------- 8. setup upstream
 # Les correctifs d'upstream installent delve@latest, qui exige aujourd'hui un Go plus récent que
@@ -674,6 +682,15 @@ info "Commande 'pretendo', interface web (port 8090) et services systemd…"
 install -m 755 "$REPO_DIR/tools/pretendo" /usr/local/bin/pretendo
 install -m 755 "$REPO_DIR/tools/pretendo-admin.py" /usr/local/bin/pretendo-admin
 install -m 755 "$REPO_DIR/tools/pretendo-dhcp.py" /usr/local/bin/pretendo-dhcp
+# Splatoon : bibliothèque de rotation (sources/splatoon-rotation, EXTRAS.tsv) et fichiers SpotPass livrés (splatoon/)
+install -m 755 "$REPO_DIR/tools/pretendo-splatoon.py" /usr/local/bin/pretendo-splatoon
+install -d -m 755 /usr/local/lib/pretendo-lan /usr/local/lib/pretendo-lan/splatoon
+rm -rf /usr/local/lib/pretendo-lan/splatoon_rotation
+cp -r "$REPO_DIR/sources/splatoon-rotation/splatoon_rotation" /usr/local/lib/pretendo-lan/
+find /usr/local/lib/pretendo-lan/splatoon_rotation -name __pycache__ -prune -exec rm -rf {} +
+for f in VSSetting.byaml Festival.byaml; do
+    install -m 644 "$REPO_DIR/splatoon/$f" "$REPO_DIR/splatoon/$f.boss" /usr/local/lib/pretendo-lan/splatoon/
+done
 [[ -s admin-password.txt ]] || { randpw 20 >admin-password.txt; chmod 600 admin-password.txt; }
 /usr/local/bin/pretendo nat-apply
 # DHCP : réglages par défaut (désactivé) à la première installation, puis configuration de dnsmasq
@@ -718,12 +735,14 @@ WantedBy=multi-user.target
 EOF
 cat >/etc/systemd/system/pretendo-maintenance.service <<EOF
 [Unit]
-Description=Pretendo LAN : maintenance nocturne (purge mitmproxy, sauvegarde)
+Description=Pretendo LAN : maintenance nocturne (purge mitmproxy, rotation de Splatoon, sauvegarde)
 
 [Service]
 Type=oneshot
 WorkingDirectory=$INSTALL_DIR
 ExecStart=/usr/bin/docker compose restart mitmproxy-pretendo
+# « - » : un échec de la rotation n'empêche pas la sauvegarde
+ExecStart=-/usr/local/bin/pretendo rotation renew
 ExecStart=/usr/local/bin/pretendo backup auto
 EOF
 cat >/etc/systemd/system/pretendo-maintenance.timer <<'EOF'
@@ -779,6 +798,8 @@ for rc in EUR/FR EUR/GB EUR/DE EUR/ES EUR/IT USA/US USA/CA JPN/JP; do
     [[ -n $v ]] && curl -s -m 20 -o /dev/null -H 'Host: tagaya-wup.cdn.nintendo.net' "http://127.0.0.1/tagaya/versionlist/$rc/list/$v.versionlist" || true
 done
 /usr/local/bin/pretendo register-games
+# Splatoon : rotation neuve avec les clés BOSS, sinon fichiers livrés (sans eux : erreur 104-0265)
+/usr/local/bin/pretendo rotation apply || warn "Splatoon : fichiers SpotPass non publiés (sudo pretendo rotation apply)"
 for _ in $(seq 1 30); do /usr/local/bin/pretendo cert export >/dev/null 2>&1 && break; sleep 2; done
 systemctl start pretendo.service || true
 

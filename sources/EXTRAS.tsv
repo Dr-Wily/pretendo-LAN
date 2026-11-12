@@ -1,3 +1,4 @@
 # Bibliothèques que la construction d'une image téléchargeait, copiées dans sources/<nom> (voir sources/README.md).
 # nom	dépôt d'origine	commit	étiquette ou branche suivie	utilisée par
 nex-protocols-common-go	https://github.com/PretendoNetwork/nex-protocols-common-go.git	41f4655e6dc9c5b9f1ba96952c04c3a042e3f735	v1.0.22	repos/wiiu-chat-secure
+splatoon-rotation	https://github.com/Dr-Wily/splatoon-Rotationator-python.git	72a74626678e5f077530ffb0e25d8de31214d99f	v1.0.0	tools/pretendo-splatoon.py

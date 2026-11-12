@@ -11,3 +11,6 @@ tools/pretendo text eol=lf
 # Code des serveurs : copie exacte des dépôts d'origine, octet pour octet
 sources/** -text
 patches/** -text
+# Fichiers SpotPass de Splatoon livrés : binaires, octet pour octet (validés sur console)
+splatoon/*.byaml binary
+splatoon/*.boss binary

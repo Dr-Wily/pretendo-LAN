@@ -538,9 +538,17 @@ boss_apply() {
         fi
     fi
     chmod 600 console-files/boss_keys.bin console-files/aes_keys.txt "$BOSS_ENV" 2>/dev/null
-    [[ $changed -eq 1 ]] && dc_up --force-recreate boss >/dev/null 2>&1 && echo "Serveur BOSS redémarré"
+    if [[ $changed -eq 1 ]] && dc_up --force-recreate boss >/dev/null 2>&1; then
+        echo "Serveur BOSS redémarré"
+        splatoon apply   # clés Wii U : rotation de Splatoon neuve
+    fi
     boss_status
 }
+
+# ---------------------------------------------------------------- Splatoon (SpotPass)
+# Rotation des stages et fichier Splatfest, servis par BOSS depuis config/boss-cdn (pretendo-splatoon).
+SPLATOON_TOOL=/usr/local/bin/pretendo-splatoon
+splatoon() { [[ -x $SPLATOON_TOOL ]] || return 0; PRETENDO_DIR=$INSTALL_DIR "$SPLATOON_TOOL" "$@"; }
 
 boss_ftp() { # récupère SD:/boss_keys.bin sur la Wii U (ftpiiu lancé)
     local ip; ip=$(grep -E '^WIIU_IP=' .env | cut -d= -f2-)
@@ -553,7 +561,8 @@ boss_ftp() { # récupère SD:/boss_keys.bin sur la Wii U (ftpiiu lancé)
 }
 
 # ---------------------------------------------------------------- sauvegarde / restauration
-CONFIG_FILES=(.env secrets.txt environment compose.override.yml admin-password.txt certs games/*/secrets.env games/*/runtime.env config/accords config/dhcp)
+CONFIG_FILES=(.env secrets.txt environment compose.override.yml admin-password.txt certs games/*/secrets.env games/*/runtime.env config/accords config/dhcp
+              config/splatoon config/boss-cdn)
 SECRET_FILES=(console-files/cert-chain.pem console-files/ssl-cert-private-key.pem console-files/CACERT_NINTENDO_CA_G3.der
               console-files/boss_keys.bin console-files/aes_keys.txt)
 
@@ -733,7 +742,8 @@ case "${1:-help}" in
         dc_up --remove-orphans || die "démarrage impossible. Image manquante ? Avec Internet : sudo pretendo rebuild"
         boot_settle
         db_race_fix
-        register_games ;;
+        register_games
+        splatoon apply || echo "Splatoon : publication de la rotation impossible (sudo pretendo rotation)" ;;
     db-race-fix)
         db_race_fix "${2:-0}" ;;
     stop)
@@ -809,6 +819,9 @@ case "${1:-help}" in
                         esac
                     done; boss_apply ;;
         esac ;;
+    rotation)
+        [[ -x $SPLATOON_TOOL ]] || die "$SPLATOON_TOOL absent : relance install-server-only.sh"
+        splatoon "${@:2}" ;;
     versions)
         versions ;;
     update)
@@ -894,6 +907,7 @@ case "${1:-help}" in
         done
         echo; echo "== Certificats"; cert_status | sed 's/^/  /'
         echo; echo "== Clés BOSS"; echo "  $(boss_status)"
+        echo; echo "== Splatoon (rotation, SpotPass)"; splatoon status 2>&1 | sed -n '2,4p' | sed 's/^/  /'
         echo; echo "== Sauvegardes"; ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | head -3 | sed 's/^/  /'
         echo; echo "== Ressources"
         df -h / | sed 's/^/  /'
@@ -922,6 +936,14 @@ Usage : pretendo <commande>
   cert [status|export|restore [dossier]]   CA mitmproxy (compilé dans Inkay) et SSSL
   inkay                              recompile Inkay et l'envoie à la Wii U (FTP, ftpiiu lancé)
   boss-keys [status|ftp|fichier…]    clés SpotPass : état, récupération FTP, import
+
+ Splatoon (rotation des stages)
+  rotation [status]                  rotation en service et prochains créneaux
+  rotation new [--hours 1|2|4]       nouvelle rotation dès maintenant (clés BOSS requises)
+         [--regular=A,B] [--rule=cVar|cVlf|cVgl] [--gachi=C,D]   stages du premier créneau (0-15)
+  rotation renew                     prolonge la rotation (automatique chaque nuit)
+  rotation apply                     republie les fichiers SpotPass de Splatoon
+  rotation regions [EUR USA JPN]     régions servies (toutes par défaut)
 
  Mises à jour (Internet requis)
   versions                           version de chaque brique / mise à jour disponible
