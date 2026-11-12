@@ -598,17 +598,36 @@ else
 fi
 
 # ----------------------------------------------------------------------------- 8b. correctifs Pretendo LAN
-# patches/<sous-module>/*.patch, appliqués APRÈS ceux d'upstream (setup.sh les réinitialise).
+# patches/<sous-module>/*.patch, appliqués APRÈS ceux d'upstream (setup.sh les réinitialise), dans l'ordre.
+# Déjà appliqués (nouvelle exécution de l'installation) : un correctif peut retoucher une ligne ajoutée par
+# un précédent (reconnexion-meme-adresse après nex-go-minuteurs, serveur d'amis) ; pris seul, le précédent
+# ne se retire plus et paraîtrait « ne plus s'appliquer ». On cherche donc le plus long début de la série
+# qui se retire en entier, du dernier au premier, sur une copie du code.
+applied_prefix() { # applied_prefix <dossier> <correctif>… : nombre de correctifs déjà appliqués
+    local sub=$1 k i tmp; shift
+    local patches=("$@")
+    for (( k=${#patches[@]}; k>0; k-- )); do
+        tmp=$(mktemp -d)
+        tar -C "$sub" --exclude=./.git -cf - . | tar -C "$tmp" -xf -
+        for (( i=k-1; i>=0; i-- )); do
+            git -C "$tmp" apply --reverse "${patches[$i]}" 2>/dev/null || break
+        done
+        rm -rf "$tmp"
+        (( i < 0 )) && { echo "$k"; return; }
+    done
+    echo 0
+}
 for pdir in "$REPO_DIR"/patches/*/; do
     [[ -d $pdir ]] || continue
     sub="repos/$(basename "$pdir")"
     [[ -d $sub ]] || { warn "correctifs $(basename "$pdir") : sous-module $sub absent"; continue; }
-    for p in "$pdir"*.patch; do
-        [[ -f $p ]] || continue
-        if git -C "$sub" apply --reverse --check "$p" 2>/dev/null; then
-            :   # déjà appliqué
-        elif git -C "$sub" apply "$p" 2>/dev/null; then
+    plist=("$pdir"*.patch); [[ -f ${plist[0]} ]] || continue
+    for (( i=$(applied_prefix "$sub" "${plist[@]}"); i<${#plist[@]}; i++ )); do
+        p=${plist[$i]}
+        if git -C "$sub" apply "$p" 2>/dev/null; then
             info "Correctif appliqué : $(basename "$pdir")/$(basename "$p")"
+        elif git -C "$sub" apply --reverse --check "$p" 2>/dev/null; then
+            :   # déjà appliqué (hors de la série)
         else
             warn "le correctif $(basename "$p") ne s'applique plus sur $sub (version modifiée ?)"
         fi

@@ -1,5 +1,11 @@
 # Journal des modifications
 
+## 1.9.1 (12/11/2026)
+
+**Installation**
+- Une nouvelle exécution de l'installation affichait « le correctif nex-go-minuteurs.patch ne s'applique plus sur repos/friends », sans effet réel : le correctif suivant du serveur d'amis (`reconnexion-meme-adresse.patch`, 1.8.2) retouche une ligne ajoutée par celui-ci, qui ne se reconnaissait donc plus comme appliqué. L'installation cherche désormais la partie de la série de correctifs déjà appliquée en la retirant en entier, du dernier au premier, sur une copie du code, puis applique la suite.
+- Vérifié le 12/11/2026 sur la VM de test : les quatre séries de correctifs reconnues comme appliquées (comptes 7, amis 6, Miiverse 3, Wii U Chat 2) ; sur un code neuf du serveur d'amis, rien, les 3 premiers puis les 6 correctifs reconnus, même résultat qu'à l'installation ; installation relancée sans l'avertissement.
+
 ## 1.9.0 (12/11/2026)
 
 **Splatoon : mode en ligne et rotation des stages** (`docs/04-administration.md`)
