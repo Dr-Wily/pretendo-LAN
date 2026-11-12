@@ -1,5 +1,14 @@
 # Journal des modifications
 
+## 1.9.2 (12/11/2026)
+
+**Splatoon : place centrale**
+- La place centrale restait vide : elle montre les Inklings des joueurs qui ont posté un message Miiverse depuis Splatoon, que le jeu demande au serveur Miiverse dans la communauté de son titre (`/v1/communities/0/posts`, clé `Warawara_03`). Aucune communauté Splatoon n'existait : le serveur répondait 404. Elle est désormais créée à chaque démarrage si elle manque (`pretendo register-games`), pour les versions européenne, américaine et japonaise, avec un numéro qui ne peut pas tomber sur ceux des tournois de Mario Kart 8.
+- Validé sur consoles le 12/11/2026 sur la VM de test, deux Wii U européennes en SSSL : un message posté depuis la place de chaque console, et chaque joueur apparaît sur la place de l'autre au lancement suivant du jeu. La publication depuis le jeu fonctionne en SSSL.
+
+**Documentation**
+- Dépannage : deux amis qui ne se voient pas en ligne avec deux serveurs sur le réseau (une console passée de l'un à l'autre sans être éteinte reste sur le premier serveur d'amis) ; place centrale de Splatoon vide.
+
 ## 1.9.1 (12/11/2026)
 
 **Installation**

@@ -13,7 +13,7 @@ Le projet s'appuie sur [MatthewL246/pretendo-docker](https://github.com/MatthewL
 | 🌐 **Site web** | Inscription d'un PNID, compte et Mii depuis un PC, sur `http://IP:8888`, sans réglage sur le PC |
 | 🎮 **Wii U non modifiées** | SSSL configuré automatiquement : rien à installer sur la console |
 | 🖥️ **Administration web** | Services, connexions des consoles, logs, comptes, mails, certificats, clés SpotPass, DHCP, rotation de Splatoon |
-| 🦑 **Splatoon** | Rotation des stages fabriquée sur le serveur (créneaux de 2 h, renouvelée chaque nuit, changeable à la main) et fichier Splatfest, sans contenu de Nintendo : le mode en ligne s'ouvre |
+| 🦑 **Splatoon** | Rotation des stages fabriquée sur le serveur (créneaux de 2 h, renouvelée chaque nuit, changeable à la main) et fichier Splatfest, sans contenu de Nintendo : le mode en ligne s'ouvre. Place centrale peuplée par les messages Miiverse des joueurs |
 | 💾 **Pérennité** | Sauvegarde nocturne automatique, restauration et migration de machine en une commande |
 | 🔄 **Mises à jour** | Brique par brique, avec sauvegarde préalable et retour arrière automatique |
 | 🧩 **Extensible** | Chaque serveur de jeu est un module (`games/<jeu>/`) |
@@ -70,7 +70,7 @@ Il reste ensuite à :
 | Liste d'amis | ✅ | ✅ | ✅ (non testé ici) |
 | Mario Kart 8 en ligne | ✅ testé | ✅ attendu | – |
 | Tournois de Mario Kart 8 | ✅ attendu | ✅ testé (création, recherche, classement) | – |
-| Splatoon : mode en ligne, rotation des stages (SpotPass) | ✅ attendu | ✅ testé (Wii U européennes : rotation annoncée, salon entre deux consoles) | – |
+| Splatoon : mode en ligne, rotation des stages (SpotPass), place centrale | ✅ attendu | ✅ testé (Wii U européennes : rotation annoncée, salon entre deux consoles, joueurs sur la place après un message Miiverse) | – |
 | Super Mario Maker, Minecraft, Pikmin 3, Wii U Chat | ✅ fournis par upstream | ✅ attendu | – |
 | Miiverse (Juxtaposition) | ✅ | ❌ (navigateur intégré) | partiel |
 | Paramètres de l'identifiant sur la console (pays, région…) | ✅ attendu | ❌ erreur 120-1819 (navigateur intégré) : onglet *Comptes* de l'admin | – |

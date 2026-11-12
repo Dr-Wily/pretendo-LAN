@@ -168,6 +168,31 @@ register_games() {
             fi
         )
     done
+    register_communities
+}
+
+# Communautés Miiverse des jeux d'upstream (hors modules games/). Sans communauté, le serveur Miiverse répond 404
+# aux requêtes du jeu. Splatoon : sa place centrale cherche les messages Miiverse postés depuis le jeu
+# (GET /v1/communities/0/posts?search_key=Warawara_03), dans la communauté de son titre.
+# nom ; numéro (jamais 100000 + 5000 × n : numéros des tournois de MK8) ; titres (Europe, États-Unis, Japon)
+UPSTREAM_COMMUNITIES=("Splatoon;100100;0005000010176A00 0005000010176900 0005000010162B00")
+register_communities() {
+    local c name id tids dec t
+    for c in "${UPSTREAM_COMMUNITIES[@]}"; do
+        IFS=';' read -r name id tids <<<"$c"
+        dec=""; for t in $tids; do dec+="'$(printf %d "0x$t")',"; done
+        dcx mongodb mongosh --quiet pretendo_miiverse --eval "
+            db.communities.updateOne(
+                { type: 0, community_id: '$id' },
+                { \$setOnInsert: {
+                    platform_id: 0, name: '$name', description: '$name', open: true, allows_comments: true,
+                    type: 0, parent: null, owner: 0, created_at: new Date(), empathy_count: 0, followers: 0, has_shop_page: 0,
+                    icon: '', title_id: [${dec%,}], community_id: '$id', olive_community_id: '$id',
+                    is_recommended: 0, app_data: '', user_favorites: [],
+                    permissions: { open: true, minimum_new_post_access_level: 0, minimum_new_comment_access_level: 0, minimum_new_community_access_level: 0 } } },
+                { upsert: true });
+        " >/dev/null && echo "  communauté Miiverse '$name' : OK"
+    done
 }
 
 check_ip() {
