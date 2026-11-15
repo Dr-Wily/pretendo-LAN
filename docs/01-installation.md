@@ -4,7 +4,7 @@
 
 | | Minimum | Conseillé |
 |---|---|---|
-| Système | Debian 13 « trixie », installation minimale | idem, sans environnement graphique |
+| Système | Debian 13 « trixie », installation minimale (avec serveur SSH pour le confort) | idem, sans environnement graphique |
 | Processeur | 64 bits : x86-64 **avec AVX** (exigé par MongoDB 5+) ou ARM64 | 4 cœurs |
 | Mémoire | 4 Go (pour construire les images) | 8 Go |
 | Disque | 25 Go libres pendant l'installation ; ensuite 10 Go d'images, plus 8 à 15 Go de cache de construction | 40 Go, SSD |
