@@ -71,14 +71,17 @@ wait_mongo() {
 # tout seul, mais certains restent à moitié démarrés sans rien signaler (constaté le 06/11/2026 : amis,
 # Splatoon, Pikmin 3). Une fois les bases prêtes, on relance ceux dont le journal de démarrage le montre.
 # db_race_fix [minutes] : seulement les conteneurs démarrés depuis moins de [minutes] (surveillance).
+# PostgreSQL prêt ? Avec l'utilisateur de la base : sans -U, pg_isready se présente en « root » et PostgreSQL
+# journalise « FATAL: role "root" does not exist » à chaque appel (chaque minute avec la surveillance).
+pg_ready() { dcx postgres sh -c 'pg_isready -q -U "$POSTGRES_USER" -d postgres' >/dev/null 2>&1; }
 db_race_fix() {
     local max=${1:-0} i svc cid started age n now
     if (( max > 0 )); then
         # surveillance (chaque minute) : sans attente ; rien à faire tant que PostgreSQL n'est pas prêt
-        dcx postgres pg_isready -q >/dev/null 2>&1 || return 0
+        pg_ready || return 0
     else
         for i in $(seq 1 60); do
-            dcx postgres pg_isready -q >/dev/null 2>&1 && break
+            pg_ready && break
             sleep 2
         done
         wait_mongo >/dev/null 2>&1 || true
@@ -110,7 +113,7 @@ boot_settle() {
     local up i svc apps=()
     up=$(cut -d. -f1 /proc/uptime)
     (( up < 900 )) || return 0
-    for i in $(seq 1 60); do dcx postgres pg_isready -q >/dev/null 2>&1 && break; sleep 2; done
+    for i in $(seq 1 60); do pg_ready && break; sleep 2; done
     wait_mongo >/dev/null 2>&1 || echo "MongoDB ne répond pas encore"
     for i in $(seq 1 30); do dcx redis redis-cli ping 2>/dev/null | grep -q PONG && break; sleep 2; done
     dc restart account >/dev/null 2>&1
@@ -171,28 +174,34 @@ register_games() {
     register_communities
 }
 
-# Communautés Miiverse des jeux d'upstream (hors modules games/). Sans communauté, le serveur Miiverse répond 404
-# aux requêtes du jeu. Splatoon : sa place centrale cherche les messages Miiverse postés depuis le jeu
-# (GET /v1/communities/0/posts?search_key=Warawara_03), dans la communauté de son titre.
-# nom ; numéro (jamais 100000 + 5000 × n : numéros des tournois de MK8) ; titres (Europe, États-Unis, Japon)
-UPSTREAM_COMMUNITIES=("Splatoon;100100;0005000010176A00 0005000010176900 0005000010162B00")
+# Communautés Miiverse des jeux connus : /usr/local/lib/pretendo-lan/miiverse/communautes.txt (miiverse/ du dépôt).
+# Celles marquées « auto » sont créées ici si elles manquent ; les autres, à la demande (onglet Communautés).
+# Sans communauté, le serveur Miiverse répond 404 aux requêtes du jeu. Splatoon : sa place centrale cherche les
+# messages Miiverse postés depuis le jeu (GET /v1/communities/0/posts?search_key=Warawara_03), dans la
+# communauté de son titre. Numéros jamais égaux à 100000 + 5000 × n (numéros des tournois de MK8).
+COMMUNITY_LIST=/usr/local/lib/pretendo-lan/miiverse/communautes.txt
+trim() { local s=$1; s=${s#"${s%%[![:space:]]*}"}; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 register_communities() {
-    local c name id tids dec t
-    for c in "${UPSTREAM_COMMUNITIES[@]}"; do
-        IFS=';' read -r name id tids <<<"$c"
-        dec=""; for t in $tids; do dec+="'$(printf %d "0x$t")',"; done
+    local id plat auto state name label tids note dec t pf
+    [[ -r $COMMUNITY_LIST ]] || { echo "  liste des communautés absente ($COMMUNITY_LIST) : réinstalle Pretendo LAN"; return 0; }
+    while IFS='|' read -r id plat auto state name tids note; do
+        id=$(trim "$id"); [[ $id =~ ^[0-9]+$ && $(trim "$auto") == oui ]] || continue
+        grep -qsE "^GAME_COMMUNITY_ID=\"?$id([^0-9]|$)" games/*/game.conf && continue   # déjà créée par son module
+        label=$(trim "$name"); name=${label//\\/\\\\}; name=${name//\'/\\\'}
+        case $(trim "$plat") in 3ds) pf=1 ;; *) pf=0 ;; esac
+        dec=""; for t in $tids; do dec+="'$(printf %d "0x${t#*:}")',"; done
         dcx mongodb mongosh --quiet pretendo_miiverse --eval "
             db.communities.updateOne(
                 { type: 0, community_id: '$id' },
                 { \$setOnInsert: {
-                    platform_id: 0, name: '$name', description: '$name', open: true, allows_comments: true,
+                    platform_id: $pf, name: '$name', description: '$name', open: true, allows_comments: true,
                     type: 0, parent: null, owner: 0, created_at: new Date(), empathy_count: 0, followers: 0, has_shop_page: 0,
                     icon: '', title_id: [${dec%,}], community_id: '$id', olive_community_id: '$id',
                     is_recommended: 0, app_data: '', user_favorites: [],
                     permissions: { open: true, minimum_new_post_access_level: 0, minimum_new_comment_access_level: 0, minimum_new_community_access_level: 0 } } },
                 { upsert: true });
-        " >/dev/null && echo "  communauté Miiverse '$name' : OK"
-    done
+        " >/dev/null && echo "  communauté Miiverse '$label' : OK"
+    done <"$COMMUNITY_LIST"
 }
 
 check_ip() {

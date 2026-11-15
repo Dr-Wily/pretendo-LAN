@@ -1,5 +1,23 @@
 # Journal des modifications
 
+## 1.10.0 (13/11/2026)
+
+**Communautés Miiverse (expérimental)**
+- Nouvel onglet *Communautés* de l'interface web : créer la communauté Miiverse d'un jeu, à partir d'une liste préremplie des jeux en ligne populaires (Wii U : Mario Kart 8, Splatoon, Super Smash Bros. for Wii U, Super Mario Maker, Super Mario 3D World, New Super Mario Bros. U, Pikmin 3, Xenoblade Chronicles X, Minecraft: Wii U Edition, Nintendo Land, Hyrule Warriors, Pokkén Tournament, The Wind Waker HD, Rayman Legends, Mario Party 10, Star Fox Zero, Resident Evil: Revelations ; 3DS : Mario Kart 7, Super Smash Bros. for Nintendo 3DS, Animal Crossing: New Leaf, Pokémon X et Y, Rubis Oméga et Saphir Alpha, Soleil et Lune, Ultra-Soleil et Ultra-Lune, Monster Hunter 4 Ultimate, Kid Icarus: Uprising), ou en saisissant les Title ID d'un autre jeu. Nom et description personnalisables, ajout de Title ID, suppression d'une communauté vide. Les sous-communautés créées par les jeux (tournois de MK8) sont affichées en lecture seule.
+- Liste des jeux dans `miiverse/communautes.txt` (numéro fixe, console, Title ID par région, état). Title ID relevés dans les listes publiques de WiiUBrew et de 3dsdb. La communauté Splatoon de la 1.9.2 en fait partie (créée à chaque démarrage, comme celle de MK8).
+- Validé sur console le 13/11/2026 sur la VM de test, Wii U européenne en SSSL : **Star Fox Zero** (menu Miiverse du mode entraînement), **Mario Party 10** (Studio photo : photo et texte), **Rayman Legends** (menu du bouton +) et **Resident Evil: Revelations** (texte et dessin). Avant la création de la communauté, l'envoi échoue (erreur 115-2004, refus du serveur) ; après, le même envoi passe et le message apparaît dans l'onglet.
+- Super Mario 3D World lit sa communauté mais garde ses fonctions Miiverse grisées : il demande aussi un serveur de jeu, absent (erreur 1021), cause probable non confirmée. Nintendo Land n'a pas accédé à Miiverse pendant l'essai.
+- **Fonction expérimentale, à tester plus largement avec les jeux** : communautés validées sur console pour Mario Kart 8, Splatoon, Star Fox Zero, Mario Party 10, Rayman Legends et Resident Evil: Revelations ; les autres jeux et le Miiverse de la 3DS restent à essayer.
+
+**Surveillance**
+- PostgreSQL journalisait « FATAL: role "root" does not exist » chaque minute : la surveillance testait la base sans préciser d'utilisateur. Elle se présente désormais avec celui de la base. Message sans conséquence, mais qui ressemblait à un plantage dans les logs.
+
+**Documentation**
+- Dépannage : erreur 115-2004 en publiant depuis un jeu (communauté manquante) ; fonctions Miiverse grisées (Super Mario 3D World) ; la publication depuis les jeux fonctionne en SSSL.
+
+**Comptes**
+- Onglet *Comptes*, **Détails** : changement du niveau d'accès d'un compte (0 joueur, 3 développeur), avec ses effets décrits (badge officiel sur Miiverse, administration web de Juxtaposition, serveurs test et dev). Changement vérifié dans la base ; effets du niveau 3 non essayés sur console.
+
 ## 1.9.2 (12/11/2026)
 
 **Splatoon : place centrale**

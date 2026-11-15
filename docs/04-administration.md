@@ -18,11 +18,12 @@ Deux outils, qui font la même chose :
 | **Services** | Conteneurs actifs, consoles connectées, PNID, amitiés, demandes d'amis, salons et tournois MK8. Pour chaque conteneur : état, CPU, RAM, ports UDP, boutons **Redémarrer** et **Logs**, et « Tout redémarrer » |
 | **Connexions** | Consoles connectées à chaque serveur de jeu (suivi des flux UDP par conntrack, avec l'IP de chaque console) et dernières requêtes HTTP des consoles via le proxy |
 | **Logs** | Logs d'un service, avec filtre texte et rafraîchissement automatique |
-| **Comptes** | PNID : PID, nom, Mii, **en ligne ou non, sur quelle console (Wii U ou 3DS) et dans quel jeu**, e-mail, activé ou non, date de création. Bouton **Détails** (dernière connexion, date de naissance, pays, région, fuseau horaire, consoles liées, niveaux d'accès…), avec le **changement de pays, de région et de fuseau horaire**. Bouton **Activer** pour un compte dont l'e-mail n'est pas validé. **Textes de l'inscription** affichés par la console (titres, textes et boutons, par langue) |
+| **Comptes** | PNID : PID, nom, Mii, **en ligne ou non, sur quelle console (Wii U ou 3DS) et dans quel jeu**, e-mail, activé ou non, date de création. Bouton **Détails** (dernière connexion, date de naissance, pays, région, fuseau horaire, consoles liées, niveaux d'accès…), avec le **changement de pays, de région et de fuseau horaire** et du **niveau d'accès** (0 joueur, 3 développeur ; voir plus bas). Bouton **Activer** pour un compte dont l'e-mail n'est pas validé. **Textes de l'inscription** affichés par la console (titres, textes et boutons, par langue) |
 | **Mails** | Mails envoyés par le serveur de comptes (confirmation, mot de passe…), en texte et en HTML. Les liens s'ouvrent dans un nouvel onglet. Bouton **Ouvrir via le serveur local** pour les liens Pretendo d'anciens mails, qui fonctionne hors ligne |
 | **Clés & certificats** | Certificat mitmproxy (expiration, correspondance avec Inkay, téléchargement, recompilation et envoi d'Inkay), état du SSSL, **clés SpotPass** (état, import de fichier, récupération FTP) |
 | **DHCP** | Serveur DHCP des consoles, voir [09-dhcp.md](09-dhcp.md) |
 | **Splatoon** | **Rotation des stages** en service et prochains créneaux, **nouvelle rotation** dès maintenant (durée des créneaux, stages et mode du premier créneau), régions servies (voir plus bas) |
+| **Communautés** | 🧪 Expérimental. **Communautés Miiverse** des jeux : liste préremplie des jeux connus, création, nom et description, sous-communautés des jeux en lecture seule (voir plus bas) |
 
 « En ligne » veut dire connecté au serveur d'amis : la console est allumée et en ligne. Le jeu affiché est celui que la console annonce à ses amis ; dans le menu de la console, c'est « Menu Wii U » ou « Menu HOME ».
 
@@ -124,8 +125,26 @@ Pretendo LAN fabrique ces fichiers lui-même, sans contenu de Nintendo, avec [sp
 
 > ⚠️ Un fichier SpotPass que le jeu refuse peut **effacer la sauvegarde de Splatoon** de la console : c'est arrivé pendant la mise au point, avec un fichier Splatfest raccourci. Les fichiers livrés sont ceux qu'ont acceptés des Wii U réelles. Tout autre fichier s'essaie d'abord avec un **compte jetable**.
 
-## Miiverse : créer une communauté
+## Miiverse : communautés des jeux (expérimental)
 
-```bash
-cd /opt/pretendo && sudo ./scripts/create-juxt-community.sh --help
-```
+> 🧪 **Fonction expérimentale**, à tester plus largement avec les jeux. Communautés validées sur console : **Mario Kart 8**, **Splatoon**, **Star Fox Zero** (menu Miiverse du mode entraînement), **Mario Party 10** (Studio photo, photo et texte), **Rayman Legends** (menu du bouton +) et **Resident Evil: Revelations** (texte et dessin). Les autres jeux de la liste et le Miiverse de la 3DS restent à essayer avec Pretendo LAN. Super Mario 3D World lit sa communauté mais garde ses fonctions Miiverse grisées, sans doute faute de serveur de jeu (non confirmé).
+
+Un jeu qui publie sur Miiverse (messages, dessins, place centrale de Splatoon, tournois de Mario Kart 8…) a besoin d'une **communauté principale portant son Title ID**. Sans elle, le serveur Miiverse répond 404 au jeu. Une communauté n'apporte pas le jeu en ligne : il faut aussi un serveur de jeu, ce qu'ont Mario Kart 8 et Splatoon.
+
+**Onglet *Communautés*** :
+
+| Partie | Contenu |
+|---|---|
+| **Jeux connus** | Liste préremplie des jeux en ligne populaires de la Wii U et de la 3DS, avec leurs Title ID de chaque région et leur état (validé sur console ou non essayé). Bouton **Créer…** |
+| **Nouvelle communauté** | Un jeu de la liste (Title ID remplis d'office), ou **Autre jeu** : console et Title ID en hexadécimal à saisir. Le nom et la description se personnalisent |
+| **Communautés du serveur** | Nom, description, Title ID, nombre de messages et de sous-communautés. **Modifier** : nom, description, ajout de Title ID (autre édition, autre région). **Supprimer** : seulement sans message ni sous-communauté |
+| **Sous-communautés** | Créées par les jeux eux-mêmes (tournois de MK8), en lecture seule : elles contiennent des données de jeu |
+
+- **La liste des jeux** est le fichier [`miiverse/communautes.txt`](../miiverse/communautes.txt) : numéro fixe de chaque communauté, console, Title ID, état. On peut y ajouter un jeu (puis réinstaller Pretendo LAN). Mario Kart 8 et Splatoon y sont marqués « auto » : leur communauté est créée à chaque démarrage si elle manque (`pretendo register-games`). Les autres se créent à la demande.
+- **Les Title ID** viennent des listes publiques de WiiUBrew (Wii U) et de 3dsdb (3DS) : chacun correspond au code produit de sa région. Pour Animal Crossing: New Leaf, seuls ceux de l'édition *Welcome amiibo* sont connus ; ceux de la cartouche d'origine s'ajoutent avec **Modifier** s'ils sont connus.
+- **Garde-fous** : un Title ID ne peut appartenir qu'à une seule communauté principale ; les Title ID de la liste ne se retirent pas ; les numéros des tournois de MK8 (100000 + 5000 × n) ne sont jamais attribués ; les messages des joueurs ne se modifient pas.
+- **Pour essayer un jeu** : crée sa communauté, publie un message depuis le jeu, puis vérifie qu'il apparaît dans la colonne *Messages* de l'onglet. Sans communauté, le serveur refuse le message et la console affiche l'**erreur 115-2004** ; une fois la communauté créée, le même envoi passe, sans redémarrer ni le jeu ni la console (essais Star Fox Zero, Mario Party 10, Rayman Legends, Resident Evil: Revelations).
+
+**Niveau d'accès 3 (développeur)** : onglet *Comptes*, bouton **Détails**. Il donne au compte un badge « officiel » sur ses messages Miiverse et ses messages privés, l'accès à l'administration web de Juxtaposition (`juxt.pretendo.network`, depuis un PC réglé sur le proxy du serveur, pas encore essayé avec Pretendo LAN) et le choix des serveurs « test » et « dev » dans les réglages du compte. Il est pris en compte à la prochaine connexion de la console. À réserver à un compte d'administration.
+
+Le script d'upstream `cd /opt/pretendo && sudo ./scripts/create-juxt-community.sh --help` crée aussi une communauté, avec un numéro au hasard et sans les garde-fous de l'onglet.

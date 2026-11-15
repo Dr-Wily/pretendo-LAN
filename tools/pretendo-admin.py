@@ -639,6 +639,216 @@ def splatoon_regions(body):
     return {"ok": code == 0, "output": (out + err).strip(), "error": _err(out, err) if code else ""}
 
 
+# Communautés Miiverse (expérimental). Un jeu qui publie sur Miiverse a besoin d'une communauté principale
+# (type 0) portant son Title ID, en décimal dans la base. Les sous-communautés (tournois de MK8…) sont créées
+# par les jeux eux-mêmes, avec des données de jeu (app_data) : jamais modifiées ici.
+COMMUNITY_LIST = "/usr/local/lib/pretendo-lan/miiverse/communautes.txt"
+COMMUNITY_PLATFORMS = {"wiiu": 0, "3ds": 1}
+PLATFORM_LABELS = {0: "Wii U", 1: "3DS", 2: "Wii U et 3DS"}
+TITLE_PREFIX = {"wiiu": "00050000", "3ds": "00040000"}
+CUSTOM_COMMUNITY_START = 110100
+_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def community_presets():
+    rows = []
+    try:
+        with open(COMMUNITY_LIST, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        f = [x.strip() for x in line.split("|")]
+        if len(f) < 6 or not f[0].isdigit():
+            continue
+        titles = []
+        for t in f[5].split():
+            region, _, hexid = t.rpartition(":")
+            titles.append({"region": region, "hex": hexid.upper()})
+        rows.append({"id": f[0], "platform": f[1], "auto": f[2] == "oui", "validated": f[3] == "validé",
+                     "name": f[4], "titles": titles, "note": f[6] if len(f) > 6 else ""})
+    return rows
+
+
+def _hex(dec):
+    try:
+        return "%016X" % int(dec)
+    except (TypeError, ValueError):
+        return str(dec)
+
+
+def communities():
+    js = (
+        "const m = db.getSiblingDB('pretendo_miiverse'), posts = {};"
+        "m.posts.aggregate([{$group: {_id: '$community_id', n: {$sum: 1}}}]).forEach(g => posts[g._id] = g.n);"
+        "const c = m.communities.find({}, {_id: 0, community_id: 1, name: 1, description: 1, type: 1, parent: 1,"
+        " platform_id: 1, title_id: 1, owner: 1, created_at: 1}).toArray();"
+        "print(EJSON.stringify({communities: c, posts: posts}, {relaxed: true}));"
+    )
+    data = mongo_eval(js)
+    if "error" in data:
+        return data
+    presets = community_presets()
+    by_id = {p["id"]: p for p in presets}
+    region_of = {t["hex"]: t["region"] for p in presets for t in p["titles"]}
+    posts = data.get("posts", {})
+    allc = data.get("communities", [])
+    names = {c.get("community_id"): c.get("name", "") for c in allc}
+    subs = {}
+    for c in allc:
+        if c.get("type", 0) != 0 and c.get("parent"):
+            subs[c["parent"]] = subs.get(c["parent"], 0) + 1
+    main, sub = [], []
+    for c in allc:
+        cid = c.get("community_id")
+        row = {"id": cid, "name": c.get("name", ""), "description": c.get("description", ""),
+               "platform": PLATFORM_LABELS.get(c.get("platform_id"), str(c.get("platform_id", ""))),
+               "posts": posts.get(cid, 0), "created_at": c.get("created_at", "")}
+        if c.get("type", 0) == 0:
+            preset = by_id.get(cid)
+            row.update({"titles": [{"hex": _hex(t), "region": region_of.get(_hex(t), "")} for t in c.get("title_id") or []],
+                        "subs": subs.get(cid, 0), "preset": bool(preset), "auto": bool(preset and preset["auto"]),
+                        "fixed": [t["hex"] for t in preset["titles"]] if preset else []})
+            row["deletable"] = not row["auto"] and row["posts"] == 0 and row["subs"] == 0
+            main.append(row)
+        else:
+            row.update({"parent": c.get("parent") or "", "parent_name": names.get(c.get("parent"), "")})
+            sub.append(row)
+    main.sort(key=lambda r: int(r["id"]) if str(r["id"]).isdigit() else 0)
+    sub.sort(key=lambda r: str(r["created_at"]), reverse=True)
+    used = {t["hex"]: r for r in main for t in r["titles"]}
+    for p in presets:
+        exists = next((r for r in main if r["id"] == p["id"]), None)
+        clash = next((used[t["hex"]] for t in p["titles"] if t["hex"] in used), None)
+        p["created"] = bool(exists)
+        p["taken_by"] = "" if exists or not clash else "%s (nº %s)" % (clash["name"], clash["id"])
+    return {"presets": presets, "main": main, "sub": sub}
+
+
+def _community_text(body):
+    name = str(body.get("name", "")).strip()
+    desc = str(body.get("description", "")).strip() or name
+    if not 0 < len(name) <= 64 or len(desc) > 300 or _CTRL.search(name) or _CTRL.search(desc.replace("\n", " ")):
+        return None, None, "nom (1 à 64 caractères) ou description (300 au plus) invalide"
+    return name, desc, ""
+
+
+def _community_titles(values, platform):
+    if not isinstance(values, list) or not 0 < len(values) <= 12:
+        return None, "de 1 à 12 Title ID"
+    out = []
+    for v in values:
+        v = str(v).strip().upper().replace("-", "")
+        if not re.match(r"^[0-9A-F]{16}$", v):
+            return None, "Title ID invalide : %s (16 chiffres hexadécimaux)" % v
+        if platform in TITLE_PREFIX and not v.startswith(TITLE_PREFIX[platform]):
+            return None, "%s n'est pas un jeu %s (préfixe %s attendu)" % (v, "Wii U" if platform == "wiiu" else "3DS", TITLE_PREFIX[platform])
+        if v not in out:
+            out.append(v)
+    return out, ""
+
+
+def _community_write(js, data):
+    r = mongo_eval("const d = %s, m = db.getSiblingDB('pretendo_miiverse');%s" % (json.dumps(data), js))
+    if "error" in r:
+        return {"ok": False, "error": r["error"]}
+    return {"ok": not r.get("refused"), "error": r.get("refused", ""), "id": r.get("id", "")}
+
+
+# refus si une autre communauté principale porte déjà un de ces titres
+_CLASH_JS = (
+    "const clash = m.communities.findOne({type: 0, community_id: {$ne: d.id}, title_id: {$in: d.titles}});"
+    "if (clash) { print(EJSON.stringify({refused: 'Title ID déjà dans la communauté ' + clash.name + ' (nº ' + clash.community_id + ')'})); quit(); }"
+)
+
+
+def community_create(body):
+    name, desc, err = _community_text(body)
+    if err:
+        return {"ok": False, "error": err}
+    preset = None
+    if body.get("preset"):
+        preset = next((p for p in community_presets() if p["id"] == str(body["preset"])), None)
+        if not preset:
+            return {"ok": False, "error": "jeu inconnu dans la liste"}
+        platform, titles = preset["platform"], [t["hex"] for t in preset["titles"]]
+    else:
+        platform = body.get("platform")
+        if platform not in COMMUNITY_PLATFORMS:
+            return {"ok": False, "error": "console : Wii U ou 3DS"}
+        titles, err = _community_titles(body.get("titles"), platform)
+        if err:
+            return {"ok": False, "error": err}
+    data = {"id": preset["id"] if preset else "", "name": name, "description": desc,
+            "platform_id": COMMUNITY_PLATFORMS.get(platform, 0), "titles": [str(int(t, 16)) for t in titles],
+            "start": CUSTOM_COMMUNITY_START}
+    js = (
+        "if (!d.id) { const ids = new Set(m.communities.distinct('community_id')); let n = d.start;"
+        " while (ids.has(String(n)) || n %% 5000 === 0) n += 100; d.id = String(n); }"  # pas un numéro de tournoi MK8
+        "if (m.communities.findOne({community_id: d.id})) { print(EJSON.stringify({refused: 'le numéro ' + d.id + ' est déjà pris'})); quit(); }"
+        "%s"
+        "m.communities.insertOne({platform_id: d.platform_id, name: d.name, description: d.description, open: true,"
+        " allows_comments: true, type: 0, parent: null, owner: 0, created_at: new Date(), empathy_count: 0, followers: 0,"
+        " has_shop_page: 0, icon: '', title_id: d.titles, community_id: d.id, olive_community_id: d.id, is_recommended: 0,"
+        " app_data: '', user_favorites: [], permissions: {open: true, minimum_new_post_access_level: 0,"
+        " minimum_new_comment_access_level: 0, minimum_new_community_access_level: 0}});"
+        "print(EJSON.stringify({id: d.id}));" % _CLASH_JS
+    )
+    return _community_write(js, data)
+
+
+def community_edit(body):
+    cid = str(body.get("id", ""))
+    if not cid.isdigit():
+        return {"ok": False, "error": "numéro invalide"}
+    name, desc, err = _community_text(body)
+    if err:
+        return {"ok": False, "error": err}
+    titles, err = _community_titles(body.get("titles"), body.get("platform"))
+    if err:
+        return {"ok": False, "error": err}
+    preset = next((p for p in community_presets() if p["id"] == cid), None)
+    missing = [t["hex"] for t in (preset or {}).get("titles", []) if t["hex"] not in titles]
+    if missing:
+        return {"ok": False, "error": "les Title ID de la liste des jeux ne peuvent pas être retirés : %s" % ", ".join(missing)}
+    data = {"id": cid, "name": name, "description": desc, "titles": [str(int(t, 16)) for t in titles]}
+    js = (
+        "if (!m.communities.findOne({type: 0, community_id: d.id})) { print(EJSON.stringify({refused: 'communauté principale introuvable'})); quit(); }"
+        "%s"
+        "m.communities.updateOne({type: 0, community_id: d.id}, {$set: {name: d.name, description: d.description, title_id: d.titles}});"
+        "print(EJSON.stringify({id: d.id}));" % _CLASH_JS
+    )
+    return _community_write(js, data)
+
+
+def community_delete(body):
+    cid = str(body.get("id", ""))
+    if not cid.isdigit():
+        return {"ok": False, "error": "numéro invalide"}
+    if any(p["id"] == cid and p["auto"] for p in community_presets()):
+        return {"ok": False, "error": "communauté recréée à chaque démarrage : elle ne se supprime pas"}
+    js = (
+        "if (m.posts.countDocuments({community_id: d.id}) || m.communities.countDocuments({parent: d.id})) {"
+        " print(EJSON.stringify({refused: 'la communauté a des messages ou des sous-communautés'})); quit(); }"
+        "const r = m.communities.deleteOne({type: 0, community_id: d.id});"
+        "print(EJSON.stringify(r.deletedCount ? {id: d.id} : {refused: 'communauté principale introuvable'}));"
+    )
+    return _community_write(js, {"id": cid})
+
+
+ACCESS_LEVELS = (0, 3)  # joueur, développeur
+
+
+def set_access_level(pid, level):
+    r = mongo_eval("const r = db.getSiblingDB('pretendo_account').pnids.updateOne({pid: %d}, {$set: {access_level: %d}});"
+                   "print(EJSON.stringify({matched: r.matchedCount}));" % (pid, level))
+    with _lock:
+        _cache.pop("accounts", None)
+    if "error" in r:
+        return {"ok": False, "error": r["error"]}
+    return {"ok": r.get("matched") == 1, "error": "" if r.get("matched") == 1 else "compte introuvable"}
+
+
 def load_password():
     with open(PASSWORD_FILE) as fh:
         return fh.read().strip()
@@ -670,7 +880,7 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
 <header><h1>Pretendo LAN</h1><nav>
 <button data-t="svc" class="on">Services</button><button data-t="cnx">Connexions</button>
 <button data-t="log">Logs</button><button data-t="acc">Comptes</button><button data-t="mail">Mails</button>
-<button data-t="cert">Clés &amp; certificats</button><button data-t="dhcp">DHCP</button><button data-t="spl">Splatoon</button></nav><span id="msg"></span></header>
+<button data-t="cert">Clés &amp; certificats</button><button data-t="dhcp">DHCP</button><button data-t="spl">Splatoon</button><button data-t="com">Communautés</button></nav><span id="msg"></span></header>
 <main>
 <section id="svc" class="on">
  <div class="kpis" id="kpis"></div>
@@ -699,7 +909,14 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
  <div class="row" style="margin-top:14px"><b>Pays, région et fuseau horaire</b></div>
  <div class="row"><select id="lcountry"></select><select id="lregion"></select><select id="ltz"></select>
  <button class="act" onclick="saveLoc()">Enregistrer</button><span class="mut" id="locmsg"></span></div>
- <p class="mut">Mêmes listes que sur la console. Éteins puis rallume la console pour qu'elle relise le compte.</p></div>
+ <p class="mut">Mêmes listes que sur la console. Éteins puis rallume la console pour qu'elle relise le compte.</p>
+ <div class="row" style="margin-top:14px"><b>Niveau d'accès</b></div>
+ <div class="row"><select id="lacc"><option value="0">0 : joueur</option><option value="3">3 : développeur</option></select>
+ <button class="act" onclick="saveAccess()">Enregistrer</button><span class="mut" id="accmsg"></span></div>
+ <p class="mut">Le niveau 3 (développeur) donne au compte : un badge « officiel » sur ses messages Miiverse et ses messages privés ;
+ l'accès à l'administration web de Juxtaposition (juxt.pretendo.network, depuis un PC réglé sur le proxy de ce serveur ; pas encore essayé avec Pretendo LAN) ;
+ le choix des serveurs « test » et « dev » dans les réglages du compte. À réserver à un compte d'administration.
+ Pris en compte à la prochaine connexion : éteins puis rallume la console.</p></div>
  <div class="card"><div class="row"><b>Textes de l'inscription sur la console</b><span class="mut" id="agrstate"></span></div>
  <p class="mut">Affichés après la création du Mii, une fois la langue choisie : d'abord le texte principal, puis le second. Appliqués aux prochaines inscriptions, sans redémarrage.</p>
  <div class="row"><label>Langue <select id="agrlang"></select></label><button class="act warn" onclick="delLang()">Retirer cette langue</button>
@@ -779,6 +996,33 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
  <div class="card"><b>Régions servies</b><div class="row" style="margin-top:10px" id="splreg"></div>
  <p class="mut">Chaque région de Splatoon a sa propre tâche SpotPass. Toutes reçoivent les mêmes fichiers. Europe : validée sur consoles. États-Unis et Japon : non essayés sur console, à essayer d'abord avec un compte jetable.</p></div>
 </section>
+<section id="com">
+ <div class="card"><div class="row"><b>Communautés Miiverse</b><span class="bad">expérimental</span>
+ <span style="flex:1"></span><button class="act" onclick="loadCom()">Rafraîchir</button></div>
+ <p><b>Fonction expérimentale</b> : elle doit encore être testée plus largement avec les jeux. Communautés validées sur console : Mario Kart 8, Splatoon,
+ Star Fox Zero, Mario Party 10, Rayman Legends et Resident Evil: Revelations. Les autres jeux de la liste et le Miiverse de la 3DS restent à essayer avec Pretendo LAN.</p>
+ <p class="mut">Erreur <b>115-2004</b> en publiant depuis un jeu : le jeu n'a pas de communauté. Crée-la ci-dessous, puis renvoie le message.</p>
+ <p class="mut">Un jeu qui publie sur Miiverse (messages, dessins, place centrale de Splatoon, tournois de Mario Kart 8…) a besoin de la communauté de son titre :
+ sans elle, le serveur Miiverse répond 404 au jeu. Une communauté n'apporte pas le jeu en ligne : il faut aussi un serveur de jeu, ce qu'ont Mario Kart 8 et Splatoon.
+ Les messages des joueurs ne se modifient pas ici.</p></div>
+ <div class="card"><b>Jeux connus</b>
+ <table><thead><tr><th>Jeu</th><th>Console</th><th>Title ID</th><th>État</th><th>Communauté</th></tr></thead><tbody id="comp"></tbody></table>
+ <p class="mut">Title ID relevés dans les listes publiques de WiiUBrew (Wii U) et de 3dsdb (3DS). Un jeu absent de la liste se crée avec « Autre jeu » ci-dessous.</p></div>
+ <div class="card"><b id="comftitle">Nouvelle communauté</b>
+ <div class="row" style="margin-top:10px"><label>Jeu <select id="c_preset"></select></label>
+ <label>Console <select id="c_plat"><option value="wiiu">Wii U</option><option value="3ds">3DS</option></select></label></div>
+ <div class="row"><label>Nom <input id="c_name" maxlength="64" size="40"></label>
+ <label style="flex:1">Description <input id="c_desc" maxlength="300" style="width:100%"></label></div>
+ <div class="row"><label style="flex:1">Title ID (hexadécimal, séparés par des espaces)
+ <input id="c_titles" style="width:100%" placeholder="0005000010176A00 0005000010176900 0005000010162B00"></label></div>
+ <div class="row"><button class="act" id="c_save" onclick="comSave()">Créer</button><button class="act" id="c_cancel" onclick="comForm()" style="display:none">Annuler</button>
+ <span class="mut" id="commsg"></span></div><p class="mut" id="cnote"></p></div>
+ <div class="card"><b>Communautés du serveur</b>
+ <table><thead><tr><th>Nº</th><th>Nom</th><th>Description</th><th>Console</th><th>Title ID</th><th>Messages</th><th>Sous-communautés</th><th></th></tr></thead><tbody id="comm"></tbody></table>
+ <p class="mut">Seules les communautés sans message ni sous-communauté, hors Mario Kart 8 et Splatoon (recréées à chaque démarrage), peuvent être supprimées.</p></div>
+ <div class="card"><b>Sous-communautés créées par les jeux</b> <span class="mut">(lecture seule : elles contiennent des données de jeu)</span>
+ <table><thead><tr><th>Nº</th><th>Nom</th><th>Communauté parente</th><th>Messages</th><th>Créée le (UTC)</th></tr></thead><tbody id="comsub"></tbody></table></div>
+</section>
 </main>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -827,7 +1071,7 @@ function accTable(p){$('#acctitle').textContent=p.username;
  ['Niveau d\'accès',p.access_level],['Accès aux serveurs',p.server_access_level],['Créé le',day(p.creation_date)],['Modifié le',day(p.updated)],
  ['Supprimé',p.deleted?'oui':'non']].map(([k,v])=>`<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('');}
 function accInfo(i){const p=window._acc[i];window._accOpen=p.pid;$('#accview').style.display='block';$('#locmsg').textContent='';
- accTable(p);locOptions(p.country,{region:p.region,tz:p.timezone});$('#accview').scrollIntoView({behavior:'smooth'});}
+ accTable(p);accLevel(p);locOptions(p.country,{region:p.region,tz:p.timezone});$('#accview').scrollIntoView({behavior:'smooth'});}
 const fmtOff=s=>{const n=Math.abs(s),h=Math.floor(n/3600),m=Math.floor(n%3600/60);return(s<0?'-':'+')+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');};
 async function locOptions(country,sel){const p=window._acc.find(x=>x.pid===window._accOpen)||{};
  const o=await api(`/api/locations?country=${encodeURIComponent(country)}&language=${encodeURIComponent(p.language||'')}`);
@@ -978,6 +1222,64 @@ async function splRegions(){const regions=[...document.querySelectorAll('.sreg:c
  if(!regions.length){alert('Au moins une région.');return;}
  if(regions.some(x=>x!=='EUR')&&!confirm('Les régions États-Unis et Japon n\'ont pas été essayées sur console. Un fichier refusé par le jeu peut effacer la sauvegarde : essaie d\'abord avec un compte jetable. Continuer ?'))return;
  splOut(await api('/api/splatoon/regions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regions})}));loadSpl();}
+const PLAT={wiiu:'Wii U','3ds':'3DS'},REG={EUR:'Europe',USA:'États-Unis',JPN:'Japon',MONDE:'toutes les régions'};
+const tlist=ts=>ts.map(t=>`<span title="${esc(REG[t.region]||'région inconnue')}">${esc(t.hex)}${t.region?' <span class="mut">'+esc(t.region)+'</span>':''}</span>`).join('<br>');
+const jpost=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+async function loadCom(){const d=await api('/api/communities');
+ if(d.error){$('#comm').innerHTML=`<tr><td class="bad">${esc(d.error)}</td></tr>`;return;}
+ window._com=d;
+ $('#comp').innerHTML=d.presets.map(p=>`<tr><td><b>${esc(p.name)}</b>${p.note?`<br><span class="mut" style="white-space:normal">${esc(p.note)}</span>`:''}</td>
+  <td>${esc(PLAT[p.platform]||p.platform)}</td><td>${tlist(p.titles)}</td>
+  <td>${p.validated?'<span class="ok">validé sur console</span>':'<span class="mut">non essayé</span>'}</td>
+  <td>${p.created?`<span class="ok">créée (nº ${esc(p.id)})</span>`:p.taken_by?`<span class="bad">Title ID déjà dans ${esc(p.taken_by)}</span>`
+  :`<button class="act" onclick="comPick('${esc(p.id)}')">Créer…</button>`}</td></tr>`).join('');
+ $('#comm').innerHTML=d.main.map((c,i)=>`<tr><td>${esc(c.id)}</td><td><b>${esc(c.name)}</b></td><td class="mut" style="white-space:normal">${esc(c.description)}</td>
+  <td>${esc(c.platform)}</td><td>${tlist(c.titles)}</td><td>${esc(c.posts)}</td><td>${esc(c.subs)}</td>
+  <td><button class="act" onclick="comEdit(${i})">Modifier</button>${c.deletable?` <button class="act warn" onclick="comDel('${esc(c.id)}')">Supprimer</button>`:''}</td></tr>`).join('')
+  ||'<tr><td class="mut">aucune</td></tr>';
+ $('#comsub').innerHTML=d.sub.map(c=>`<tr><td>${esc(c.id)}</td><td>${esc(c.name)}</td><td>${esc(c.parent_name)} <span class="mut">(nº ${esc(c.parent)})</span></td>
+  <td>${esc(c.posts)}</td><td class="mut">${esc(day(c.created_at))}</td></tr>`).join('')||'<tr><td class="mut">aucune</td></tr>';
+ if(!window._comForm){window._comForm=1;comForm();}}
+function comForm(sel){window._comEditing=null;const d=window._com||{presets:[]},free=d.presets.filter(p=>!p.created&&!p.taken_by);
+ $('#comftitle').textContent='Nouvelle communauté';$('#c_save').textContent='Créer';$('#c_cancel').style.display='none';$('#c_preset').disabled=false;
+ $('#c_preset').innerHTML=free.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(PLAT[p.platform]||p.platform)})</option>`).join('')
+  +'<option value="">Autre jeu (saisie libre)</option>';
+ if(sel!==undefined&&[...$('#c_preset').options].some(o=>o.value===sel))$('#c_preset').value=sel;comPreset();}
+function comPreset(){const id=$('#c_preset').value,p=((window._com||{}).presets||[]).find(x=>x.id===id);
+ $('#c_plat').disabled=!!p;$('#c_titles').readOnly=!!p;
+ if(p){$('#c_plat').value=p.platform;$('#c_name').value=p.name;$('#c_desc').value=p.name;$('#c_titles').value=p.titles.map(t=>t.hex).join(' ');
+  $('#cnote').textContent=p.validated?'':'Jeu non essayé avec Pretendo LAN : vérifie ensuite sur console que le jeu publie bien dans cette communauté.';}
+ else{$('#c_name').value='';$('#c_desc').value='';$('#c_titles').value='';
+  $('#cnote').textContent='Title ID du jeu en hexadécimal, 16 chiffres (00050000… pour la Wii U, 00040000… pour la 3DS), un par région. La communauté reçoit un numéro libre à partir de 110100.';}
+ $('#commsg').textContent='';}
+$('#c_preset').onchange=comPreset;
+function comPick(id){comForm(id);$('#c_name').scrollIntoView({behavior:'smooth',block:'center'});$('#c_name').focus();}
+function comEdit(i){const c=window._com.main[i];window._comEditing=c;
+ $('#comftitle').textContent=`Modifier la communauté nº ${c.id}`;$('#c_save').textContent='Enregistrer';$('#c_cancel').style.display='';
+ $('#c_preset').innerHTML='<option>—</option>';$('#c_preset').disabled=true;$('#c_plat').disabled=true;$('#c_plat').value=c.platform==='3DS'?'3ds':'wiiu';
+ $('#c_titles').readOnly=false;$('#c_name').value=c.name;$('#c_desc').value=c.description;$('#c_titles').value=c.titles.map(t=>t.hex).join(' ');
+ $('#cnote').textContent=c.fixed.length?'Les Title ID de la liste des jeux ne peuvent pas être retirés ; on peut en ajouter (autre édition du jeu, autre région).':'';
+ $('#commsg').textContent='';$('#c_name').scrollIntoView({behavior:'smooth',block:'center'});}
+function comMsg(r,ok){$('#commsg').className=r.ok?'ok':'bad';$('#commsg').textContent=r.ok?ok:'Échec : '+(r.error||'?');}
+async function comSave(){const c=window._comEditing,titles=$('#c_titles').value.split(/[\s,;]+/).filter(Boolean),
+ body={name:$('#c_name').value,description:$('#c_desc').value};let r;
+ try{if(c){if(!confirm(`Enregistrer les changements de la communauté nº ${c.id} ?`))return;
+   r=await jpost('/api/communities/edit',{...body,id:c.id,titles,platform:$('#c_plat').value});}
+  else{const preset=$('#c_preset').value;
+   if(!confirm(`Créer la communauté « ${body.name} » ? Fonction expérimentale : vérifie ensuite sur console que le jeu y accède.`))return;
+   r=await jpost('/api/communities/create',preset?{...body,preset}:{...body,platform:$('#c_plat').value,titles});}}
+ catch(e){r={ok:false,error:e.message};}
+ if(r.ok){await loadCom();comForm();}comMsg(r,c?'Enregistré.':`Créée (nº ${r.id}).`);}
+async function comDel(id){if(!confirm(`Supprimer la communauté nº ${id} ?`))return;let r;
+ try{r=await jpost('/api/communities/delete',{id});}catch(e){r={ok:false,error:e.message};}
+ if(r.ok){await loadCom();comForm();}comMsg(r,'Supprimée.');}
+function accLevel(p){const s=$('#lacc'),v=String(p.access_level??0);
+ if(![...s.options].some(o=>o.value===v))s.insertAdjacentHTML('beforeend',`<option value="${esc(v)}">${esc(v)}</option>`);s.value=v;$('#accmsg').textContent='';}
+async function saveAccess(){const pid=window._accOpen,level=Number($('#lacc').value);
+ if(level!==0&&level!==3){alert('Niveau 0 ou 3 seulement.');return;}
+ if(!confirm(level===3?`Passer le compte ${pid} au niveau 3 (développeur) ? Ses messages Miiverse porteront le badge officiel.`:`Repasser le compte ${pid} au niveau 0 (joueur) ?`))return;
+ let r;try{r=await jpost('/api/accounts/access',{pid,level});}catch(e){r={ok:false,error:e.message};}
+ $('#accmsg').className=r.ok?'ok':'bad';$('#accmsg').textContent=r.ok?'Enregistré. Éteins puis rallume la console.':'Échec : '+(r.error||'?');loadAcc();}
 function showLogs(s){document.querySelector('nav button[data-t=log]').click();$('#lsvc').value=s;loadLogs();}
 async function restart(s){if(!confirm(s==='all'?'Redémarrer tous les services ?':`Redémarrer ${s} ?`))return;
  $('#msg').textContent=`Redémarrage de ${s}…`;try{const r=await api('/api/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:s})});
@@ -985,7 +1287,8 @@ async function restart(s){if(!confirm(s==='all'?'Redémarrer tous les services ?
 async function refresh(){try{if(tab==='svc'){const s=await loadSvc();loadKpis(s);}else if(tab==='cnx')await loadCnx();
  else if(tab==='log'){if(!$('#lsvc').options.length)await loadSvc();if($('#lauto').checked||!rawLogs)await loadLogs();}else if(tab==='acc'){await loadAcc();if(!window._agrLoaded){window._agrLoaded=1;await loadAgr();}}
  else if(tab==='mail')await loadMails();else if(tab==='dhcp')await loadDhcp();else if(tab==='cert'&&!window._certLoaded){window._certLoaded=1;await loadCert();await loadBoss();}
- else if(tab==='spl'&&!window._splLoaded){window._splLoaded=1;await loadSpl();}}
+ else if(tab==='spl'&&!window._splLoaded){window._splLoaded=1;await loadSpl();}
+ else if(tab==='com'&&!window._comLoaded){window._comLoaded=1;await loadCom();}}
  catch(e){$('#msg').textContent='Erreur : '+e.message;}}
 refresh();setInterval(refresh,10000);
 </script></body></html>"""
@@ -1060,6 +1363,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(dhcp_info())
         if url.path == "/api/splatoon":
             return self._send(splatoon_status())
+        if url.path == "/api/communities":
+            return self._send(communities())
         if url.path in ("/cert/mitmproxy-ca-cert.pem", "/cert/mitmproxy-ca-cert.cer"):
             path = os.path.join(CERT_DIR, os.path.basename(url.path))
             if not os.path.exists(path):
@@ -1145,6 +1450,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(splatoon_new(body))
         if path == "/api/splatoon/regions":
             return self._send(splatoon_regions(body))
+        if path == "/api/communities/create":
+            return self._send(community_create(body))
+        if path == "/api/communities/edit":
+            return self._send(community_edit(body))
+        if path == "/api/communities/delete":
+            return self._send(community_delete(body))
+        if path == "/api/accounts/access":
+            pid, level = body.get("pid"), body.get("level")
+            if type(pid) is not int or not 0 < pid < 2 ** 32 or type(level) is not int or level not in ACCESS_LEVELS:
+                return self._send({"error": "PID ou niveau invalide"}, code=400)
+            return self._send(set_access_level(pid, level))
         if path == "/api/inkay":
             code, out, err = run(["/usr/local/bin/pretendo", "inkay"], timeout=1200)
             return self._send({"ok": code == 0, "output": re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\(B", "", out + err)[-4000:]})

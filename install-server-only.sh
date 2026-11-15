@@ -710,6 +710,9 @@ find /usr/local/lib/pretendo-lan/splatoon_rotation -name __pycache__ -prune -exe
 for f in VSSetting.byaml Festival.byaml; do
     install -m 644 "$REPO_DIR/splatoon/$f" "$REPO_DIR/splatoon/$f.boss" /usr/local/lib/pretendo-lan/splatoon/
 done
+# Miiverse : liste des communautés des jeux connus (pretendo register-games, onglet Communautés)
+install -d -m 755 /usr/local/lib/pretendo-lan/miiverse
+install -m 644 "$REPO_DIR/miiverse/communautes.txt" /usr/local/lib/pretendo-lan/miiverse/
 [[ -s admin-password.txt ]] || { randpw 20 >admin-password.txt; chmod 600 admin-password.txt; }
 /usr/local/bin/pretendo nat-apply
 # DHCP : réglages par défaut (désactivé) à la première installation, puis configuration de dnsmasq
