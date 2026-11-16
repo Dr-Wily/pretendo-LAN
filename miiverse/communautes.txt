@@ -1,13 +1,17 @@
 # Communautés Miiverse des jeux connus (expérimental : à essayer plus largement avec les jeux).
 #
 # Une ligne par jeu, champs séparés par « | » :
-#   numéro | console (wiiu, 3ds) | auto | état | nom | Title ID | remarque
+#   numéro | console (wiiu, 3ds) | auto | état | nom | Title ID | remarque | serveur annexe
 #   - numéro : identifiant de la communauté, fixe pour qu'il soit le même sur tous les serveurs ;
 #     jamais 100000 + 5000 × n (numéros des tournois de Mario Kart 8) ;
 #   - auto : « oui » = créée à chaque démarrage si elle manque (pretendo register-games) ;
 #     « non » = créée à la demande, onglet Communautés de l'interface web ;
-#   - état : « validé » (essayé sur console) ou « non essayé » ;
-#   - Title ID : en hexadécimal, préfixés de la région (EUR, USA, JPN, MONDE = un seul titre pour toutes).
+#   - état : « validé » (essayé sur console), « non essayé », ou « serveur annexe » (la publication Miiverse
+#     du jeu a besoin d'un autre serveur, indiqué dans le dernier champ, et n'a pas encore été validée avec lui) ;
+#     un jeu « validé » qui a un serveur annexe a été validé avec ce serveur ;
+#   - Title ID : en hexadécimal, préfixés de la région (EUR, USA, JPN, MONDE = un seul titre pour toutes) ;
+#   - serveur annexe (facultatif) : serveurs dont le jeu a besoin, séparés par des espaces :
+#     « nex:<ID du serveur de jeu> » (module games/), « service:<client_id>=<nom> » (service web indépendant).
 #
 # Sources des Title ID (relevés le 12/11/2026) : Wii U, liste « Title database » de WiiUBrew ;
 # 3DS, listes de l'eShop de 3dsdb (hax0kartik/3dsdb). Chaque Title ID correspond au code produit
@@ -18,19 +22,19 @@
 100100 | wiiu | oui | validé     | Splatoon | EUR:0005000010176A00 USA:0005000010176900 JPN:0005000010162B00 | Place centrale : messages postés depuis le jeu.
 100200 | wiiu | non | non essayé | Super Smash Bros. for Wii U | EUR:0005000010145000 USA:0005000010144F00 JPN:0005000010110E00 |
 100300 | wiiu | non | non essayé | Super Mario Maker | EUR:000500001018DD00 USA:000500001018DC00 JPN:000500001018DB00 | Les niveaux passent par le serveur de jeu, pas par Miiverse.
-100400 | wiiu | non | non essayé | Super Mario 3D World | EUR:0005000010145D00 USA:0005000010145C00 JPN:0005000010106100 | Essai du 12/11/2026 : le jeu lit sa communauté, mais ses fonctions Miiverse restent grisées. Il demande un serveur de jeu absent (erreur 1021) : cause probable, non confirmée.
+100400 | wiiu | non | validé     | Super Mario 3D World | EUR:0005000010145D00 USA:0005000010145C00 JPN:0005000010106100 | Sans serveur de jeu, fonctions Miiverse grisées (12/11/2026). Validé le 15/11/2026 avec le module games/super-mario-3d-world : fonctions Miiverse débloquées en avançant dans le jeu (après le premier niveau du monde 2), texte et dessin publiés. | nex:10106100
 100500 | wiiu | non | non essayé | New Super Mario Bros. U | EUR:0005000010101E00 USA:0005000010101D00 JPN:0005000010101C00 EUR:000500001014B800 USA:000500001014B700 | Inclut l'édition New Super Mario Bros. U + New Super Luigi U (Europe, États-Unis).
 100600 | wiiu | non | non essayé | Pikmin 3 | EUR:000500001012BE00 USA:000500001012BD00 JPN:000500001012BC00 |
 100700 | wiiu | non | non essayé | Xenoblade Chronicles X | EUR:00050000101C4C00 USA:00050000101C4D00 JPN:0005000010116100 | Europe : code produit AX5D dans la source.
 100800 | wiiu | non | non essayé | Minecraft: Wii U Edition | EUR:00050000101D7500 USA:00050000101D9D00 JPN:00050000101DBE00 |
 100900 | wiiu | non | non essayé | Nintendo Land | EUR:0005000010102100 USA:0005000010102000 JPN:0005000010101F00 | Essai du 12/11/2026 : aucun accès à Miiverse observé, fonction de publication non trouvée dans le jeu.
 101000 | wiiu | non | non essayé | Hyrule Warriors | EUR:000500001017D900 USA:000500001017D800 JPN:000500001017CD00 |
-101100 | wiiu | non | non essayé | Pokkén Tournament | EUR:00050000101DF500 USA:00050000101DF400 JPN:00050000101C5800 | Pas de serveur de jeu dans Pretendo LAN : le jeu ne passe pas la connexion.
+101100 | wiiu | non | serveur annexe | Pokkén Tournament | EUR:00050000101DF500 USA:00050000101DF400 JPN:00050000101C5800 | Sans serveur de jeu, le jeu ne passe pas la connexion (essai du 13/11/2026). Serveur de jeu : module games/pokken-tournament. Avec lui, combat en ligne et classement validés le 15/11/2026 ; aucune fonction Miiverse vue dans le jeu. | nex:101C5800
 101200 | wiiu | non | non essayé | The Legend of Zelda: The Wind Waker HD | EUR:0005000010143600 USA:0005000010143500 JPN:0005000010143400 | Bouteilles de Tingle : messages passant par Miiverse.
 101300 | wiiu | non | validé     | Rayman Legends | EUR:0005000010111400 USA:000500001010B100 JPN:0005000010112600 | Validé le 13/11/2026 (Wii U européenne, SSSL) : message publié depuis le menu du bouton +. Sans communauté : erreur 115-2004. Défis en ligne sur les serveurs d'Ubisoft, non fournis (jeton refusé, sans gêner Miiverse).
 101400 | wiiu | non | validé     | Mario Party 10 | EUR:0005000010162E00 USA:0005000010162D00 JPN:0005000010161F00 | Validé le 13/11/2026 (Wii U européenne, SSSL) : photo du Studio photo publiée avec un texte. Sans communauté : erreur 115-2004.
 101500 | wiiu | non | validé     | Star Fox Zero | EUR:00050000101B0500 USA:00050000101B0400 JPN:00050000101AFF00 | Validé le 13/11/2026 (Wii U européenne, SSSL) : message publié depuis le menu Miiverse du mode entraînement. Sans communauté : erreur 115-2004.
-101600 | wiiu | non | validé     | Resident Evil: Revelations | EUR:000500001012B400 USA:000500001012CF00 JPN:0005000010113100 | Validé le 13/11/2026 (Wii U européenne, SSSL) : un message texte et un dessin publiés depuis le jeu. Sans communauté : erreur 115-2004. Japon : Biohazard Revelations Unveiled Edition.
+101600 | wiiu | non | validé     | Resident Evil: Revelations | EUR:000500001012B400 USA:000500001012CF00 JPN:0005000010113100 | Validé le 13/11/2026 avant la mise à jour du jeu (texte et dessin publiés ; sans communauté : erreur 115-2004). Depuis la mise à jour, le mode réseau et la publication demandent un jeton du service RESIDENT EVIL.NET (sans lui : erreur 102-2482). Validé le 15/11/2026 avec le module games/resident-evil-revelations, qui déclare ce service : mode réseau, messages des créatures et funèbres, messages des autres comptes affichés. Japon : Biohazard Revelations Unveiled Edition. | nex:10113100 service:5bf395b40d27e23bdb1ddad2270cbfbb=RESIDENT EVIL.NET
 # --- 3DS (Miiverse 3DS jamais essayé avec Pretendo LAN)
 102000 | 3ds | non | non essayé | Mario Kart 7 | EUR:0004000000030700 USA:0004000000030800 JPN:0004000000030600 |
 102100 | 3ds | non | non essayé | Super Smash Bros. for Nintendo 3DS | EUR:00040000000EE000 USA:00040000000EDF00 JPN:00040000000B8B00 |

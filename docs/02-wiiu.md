@@ -89,7 +89,7 @@ Prérequis côté serveur : SSSL activé à l'installation. `sudo pretendo cert 
 
 Limites rappelées : pas de Miiverse/Juxtaposition dans l'applet (navigateur intégré), pas d'eShop, et les rares jeux qui gèrent eux-mêmes leur SSL ne fonctionnent pas.
 
-> En SSSL, la console garde les noms Nintendo (`*.nintendo.net`). Le serveur les traduit en noms Pretendo, comme le ferait Inkay. Avant la version 1.2.0 de Pretendo LAN, et dans pretendo-docker d'origine, cette traduction manquait : la liste des règles et le point d'entrée Miiverse répondaient 404. Le serveur relaie aussi `tagaya` (vérification des versions) vers Nintendo, avec un cache pour le fonctionnement hors ligne.
+> En SSSL, la console garde les noms Nintendo (`*.nintendo.net`). Le serveur les traduit en noms Pretendo, comme le ferait Inkay. Avant la version 1.2.0 de Pretendo LAN, et dans pretendo-docker d'origine, cette traduction manquait : la liste des règles et le point d'entrée Miiverse répondaient 404. Le serveur relaie aussi `tagaya` (vérification des versions) vers Nintendo, avec un cache pour le fonctionnement hors ligne, ainsi que les icônes des jeux de la liste d'amis (`idbe`), gardées pour toujours dans `/opt/pretendo/icones/`.
 
 ---
 

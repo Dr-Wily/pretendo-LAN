@@ -1,0 +1,29 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Local
+.vscode
+.idea
+.env
+rerev-nex
+build
+log
+*.pem
+*.key
+*.pcap
+*.pcapng
+settings.json
+
+.DS_Store
+recon/*.bin
+recon/secs.pkl

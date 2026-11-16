@@ -16,6 +16,10 @@ La construction de wiiu-chat-secure téléchargeait sur GitHub sa bibliothèque 
 
 La rotation des stages de Splatoon est fabriquée par [splatoon-Rotationator-python](https://github.com/Dr-Wily/splatoon-Rotationator-python), portage en Python de Rotationator (OatmealDome), écrit pour Pretendo LAN. Elle est copiée dans [`splatoon-rotation/`](splatoon-rotation/), sa version dans [`EXTRAS.tsv`](EXTRAS.tsv) ; l'installation la place dans `/usr/local/lib/pretendo-lan/` pour `pretendo-splatoon`.
 
+## Serveurs de jeux ajoutés
+
+Trois serveurs de jeux que pretendo-docker ne fournit pas, sous licence AGPL-3.0, sont copiés ici tels que publiés : [`super-mario-3d-world/`](super-mario-3d-world/) ([PretendoNetwork/super-mario-3d-world-secure](https://github.com/PretendoNetwork/super-mario-3d-world-secure)), [`pokken-tournament/`](pokken-tournament/) ([PretendoNetwork/pokken-tournament](https://github.com/PretendoNetwork/pokken-tournament)) et [`resident-evil-revelations/`](resident-evil-revelations/) ([Protarium-Network/resident-evil-revelations-nex](https://github.com/Protarium-Network/resident-evil-revelations-nex)). Leurs versions sont dans [`EXTRAS.tsv`](EXTRAS.tsv). Le module de chaque jeu (`games/<jeu>/`, `GAME_SOURCE`) les prend ici au lieu de les télécharger ; ses correctifs sont dans `games/<jeu>/patches/`. Leurs bibliothèques Go sont téléchargées à la construction de l'image, comme pour les autres serveurs Go.
+
 Les corrections de Pretendo LAN ne sont pas mélangées à ce code : elles sont dans [`patches/`](../patches/), appliquées à l'installation après celles d'upstream (`pretendo-docker/patches/`).
 
 ## Licences
@@ -29,6 +33,8 @@ Chaque composant garde sa licence, dans son dossier.
 | Inkay, SSSL | Pretendo Network | GPL-3.0 |
 | nex-protocols-common-go (bibliothèque de wiiu-chat-secure) | Pretendo Network | AGPL-3.0 |
 | mitmproxy-pretendo | MatthewL246 | Unlicense (domaine public) |
+| super-mario-3d-world, pokken-tournament (serveurs de jeux) | Pretendo Network | AGPL-3.0 |
+| resident-evil-revelations (serveur de jeu) | Protarium Network | AGPL-3.0 |
 | splatoon-rotation (rotation de Splatoon) | Dr-Wily, d'après Rotationator d'OatmealDome | MIT |
 
 Le serveur Mario Kart 8 ([Newtendo-Network/nex_mario_kart_8](https://github.com/Newtendo-Network/nex_mario_kart_8)) et sa bibliothèque nex_protocols_common_py ne sont pas ici : les dépôts d'origine n'ont pas de licence, ce qui ne permet pas de redistribuer leur code. Son autre sous-module, grpc_py (Pretendo Network, dépôt archivé), n'a pas non plus de licence. L'installation les télécharge depuis leurs copies sur le GitHub du projet ([Dr-Wily/nex_mario_kart_8](https://github.com/Dr-Wily/nex_mario_kart_8), [Dr-Wily/nex_protocols_common_py](https://github.com/Dr-Wily/nex_protocols_common_py), [Dr-Wily/grpc_py](https://github.com/Dr-Wily/grpc_py)), au commit figé dans `games/mario-kart-8/game.conf`. Le sous-module de grpc_py, grpc-protobufs (archivé, « Deprecated »), n'est pas téléchargé : il ne sert qu'à refabriquer le code Python déjà enregistré dans grpc_py.

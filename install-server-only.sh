@@ -69,6 +69,32 @@ retry() { # les téléchargements (Docker Hub, GitHub, npm) peuvent échouer pas
     done
     return 1
 }
+# Certificat racine de Nintendo pris dans la chaîne servie par l'un des hôtes donnés, retenu
+# seulement s'il a l'empreinte attendue. Nintendo ne le fournit pas partout et peut le retirer
+# (account.nintendo.net a cessé d'envoyer le CA G3 en novembre 2026) : plusieurs hôtes sont
+# essayés, par le DNS de la machine puis, si dig est présent, par un DNS public.
+fetch_nintendo_ca() { # empreinte fichier hôte…
+    local sha=$1 out=$2 h ip c tmp
+    shift 2
+    tmp=$(mktemp -d)
+    for h in "$@"; do
+        for ip in "$h" $( { command -v dig >/dev/null && dig +short @1.1.1.1 "$h" A 2>/dev/null | grep -E '^[0-9.]+$' | tail -1; } || true ); do
+            rm -f "$tmp"/c*.pem
+            { timeout 15 openssl s_client -connect "$ip:443" -servername "$h" -showcerts </dev/null 2>/dev/null \
+                | awk -v d="$tmp" '/BEGIN CERT/{n++} n{print > (d "/c" n ".pem")}'; } || true
+            for c in "$tmp"/c*.pem; do
+                [[ -s $c ]] || continue
+                if [[ $(openssl x509 -in "$c" -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1) == "$sha" ]]; then
+                    openssl x509 -in "$c" -outform DER -out "$out"
+                    rm -rf "$tmp"
+                    return 0
+                fi
+            done
+        done
+    done
+    rm -rf "$tmp"
+    return 1
+}
 route_field() { ip -4 route get 1.1.1.1 2>/dev/null | awk -v f="$1" '{for(i=1;i<=NF;i++) if($i==f){print $(i+1); exit}}'; }
 
 while [[ $# -gt 0 ]]; do
@@ -360,11 +386,34 @@ for g in $GAMES; do
             export "GIT_CONFIG_KEY_$n=submodule.${s##*/}.update" "GIT_CONFIG_VALUE_$n=none"; n=$((n + 1))
         done
         export GIT_CONFIG_COUNT=$n
-        [[ -d games/$g/src/.git ]] || git clone -q "$GAME_REPO" "games/$g/src"
-        git -C "games/$g/src" remote set-url origin "$GAME_REPO"   # installations antérieures : dépôt d'origine
-        if [[ ! -f games/$g/.pinned-by-update ]]; then   # 'pretendo update' peut avoir choisi une autre version
-            git -C "games/$g/src" fetch -q origin || true
-            git -C "games/$g/src" checkout -q -f "$GAME_COMMIT"
+        if [[ -n ${GAME_SOURCE:-} ]]; then
+            # code copié dans le dépôt (GAME_SOURCE, sous sources/) : rien n'est téléchargé. Le dossier reste un
+            # dépôt git local (origine : GAME_REPO), comme les briques d'upstream, pour 'pretendo update'.
+            src=$REPO_DIR/$GAME_SOURCE
+            [[ -d $src ]] || die "games/$g : $GAME_SOURCE introuvable dans $REPO_DIR"
+            if [[ -f games/$g/.pinned-by-update ]]; then
+                warn "$GAME_NAME : version choisie avec 'pretendo update', gardée"
+            elif [[ $(git -C "games/$g/src" rev-parse -q --verify 'HEAD^{tree}' 2>/dev/null) != "$(tree_of "$src")" ]]; then
+                rm -rf "games/$g/src"; mkdir -p "games/$g/src"
+                tar -C "$src" -cf - . | tar -C "games/$g/src" -xf -
+                git -C "games/$g/src" init -q -b main
+                git -C "games/$g/src" remote add origin "$GAME_REPO"
+                git -C "games/$g/src" add -A
+                git "${GITID[@]}" -C "games/$g/src" commit -q -m "Pretendo LAN : $GAME_REPO @ ${GAME_COMMIT:0:8}"
+            fi
+            # correctifs du module (games/<jeu>/patches), au-dessus de la version figée ; déjà posés : rien à faire
+            for p in "$REPO_DIR/games/$g/patches"/*.patch; do
+                [[ -f $p ]] || continue
+                git -C "games/$g/src" apply --reverse --check "$p" 2>/dev/null && continue
+                git -C "games/$g/src" apply "$p" || die "games/$g : le correctif $(basename "$p") ne s'applique pas"
+            done
+        else
+            [[ -d games/$g/src/.git ]] || git clone -q "$GAME_REPO" "games/$g/src"
+            git -C "games/$g/src" remote set-url origin "$GAME_REPO"   # installations antérieures : dépôt d'origine
+            if [[ ! -f games/$g/.pinned-by-update ]]; then   # 'pretendo update' peut avoir choisi une autre version
+                git -C "games/$g/src" fetch -q origin || true
+                git -C "games/$g/src" checkout -q -f "$GAME_COMMIT"
+            fi
         fi
         git -C "games/$g/src" submodule update --init --recursive --force -q
         for s in ${GAME_SKIP_SUBMODULES:-}; do   # installations antérieures : sous-module inutile retiré
@@ -384,14 +433,12 @@ SSSL_ENABLED=0
 mkdir -p console-files
 if [[ $WANT_SSSL -eq 1 ]]; then
     if [[ ! -s console-files/cert-chain.pem || ! -s console-files/ssl-cert-private-key.pem ]]; then
-        # Le vrai « Nintendo CA - G3 » est dans la chaîne servie par account.nintendo.net
-        if ! echo "$G3_SHA256  $G3_DER" | sha256sum -c --quiet 2>/dev/null; then
+        if ! echo "$G3_SHA256  $G3_DER" | sha256sum -c --quiet >/dev/null 2>&1; then
             info "Récupération du certificat Nintendo CA - G3…"
-            timeout 20 openssl s_client -connect account.nintendo.net:443 -servername account.nintendo.net -showcerts </dev/null 2>/dev/null \
-                | awk '/BEGIN CERT/{n++} {if (n==2) print} /END CERT/{if (n==2) exit}' \
-                | openssl x509 -outform DER -out "$G3_DER" 2>/dev/null || true
+            fetch_nintendo_ca "$G3_SHA256" "$G3_DER" account.nintendo.net mii-secure.account.nintendo.net \
+                discovery.olv.nintendo.net nppl.app.nintendo.net ecs.c.shop.nintendowifi.net || true
         fi
-        if echo "$G3_SHA256  $G3_DER" | sha256sum -c --quiet 2>/dev/null; then
+        if echo "$G3_SHA256  $G3_DER" | sha256sum -c --quiet >/dev/null 2>&1; then
             info "Génération du certificat SSSL…"
             retry script -qec ./scripts/patch-sssl-certificate.sh /dev/null </dev/null >/dev/null \
                 || die "génération du certificat SSSL impossible. Relance l'installation, ou passe --no-sssl pour t'en passer."
@@ -404,8 +451,48 @@ if [[ $WANT_SSSL -eq 1 ]]; then
     [[ -s console-files/cert-chain.pem && -s console-files/ssl-cert-private-key.pem ]] \
         || die "certificat SSSL absent après sa génération. Relance l'installation, ou passe --no-sssl pour t'en passer."
     SSSL_ENABLED=1
+
+    # Icônes des jeux (liste d'amis) : le serveur d'icônes de Nintendo (idbe) est signé par
+    # « Nintendo Class 2 CA - G3 », pas par le G3 : la console refuse le certificat SSSL habituel.
+    # Même modification SSSL sur ce CA ; nginx-sssl le présente selon le nom demandé (SNI).
+    # Facultatif : sans lui, seules les icônes des jeux non installés restent des « ? ».
+    CLASS2_SHA256="58054caa85da74b2b9f3407b17bb8428040e46a9159a1afb9f58cadac27642c0"
+    CLASS2_DER=console-files/CACERT_NINTENDO_CLASS2_CA_G3.der
+    mkdir -p console-files/idbe
+    if [[ ! -s console-files/idbe/cert-chain.pem || ! -s console-files/idbe/private-key.pem ]]; then
+        if ! echo "$CLASS2_SHA256  $CLASS2_DER" | sha256sum -c --quiet >/dev/null 2>&1; then
+            info "Récupération du certificat Nintendo Class 2 CA - G3…"
+            fetch_nintendo_ca "$CLASS2_SHA256" "$CLASS2_DER" wup-o2fgs.cdn.nintendo.net || true
+        fi
+        if echo "$CLASS2_SHA256  $CLASS2_DER" | sha256sum -c --quiet >/dev/null 2>&1; then
+            info "Génération du certificat des icônes…"
+            ca_tmp=$(mktemp -d)
+            cp "$CLASS2_DER" "$ca_tmp/"
+            if { docker image inspect sssl >/dev/null 2>&1 || docker build -q -t sssl repos/SSSL >/dev/null; } \
+                && docker run --rm -v "$ca_tmp:/app/certs" sssl -g3 "/app/certs/$(basename "$CLASS2_DER")" -o /app/certs >/dev/null 2>&1; then
+                install -m 644 "$ca_tmp/cert-chain.pem" console-files/idbe/cert-chain.pem
+                install -m 600 "$ca_tmp/ssl-cert-private-key.pem" console-files/idbe/private-key.pem
+            fi
+            rm -rf "$ca_tmp"
+        else
+            rm -f "$CLASS2_DER"
+        fi
+    fi
+    if [[ -s console-files/idbe/cert-chain.pem && -s console-files/idbe/private-key.pem ]]; then
+        IDBE_SSSL=1
+    else
+        warn "certificat des icônes non créé (pas d'Internet ?) : les icônes des jeux non installés resteront des « ? ». Relance l'installation pour réessayer."
+    fi
 fi
 rm -f config/pretendo-lan-sssl.conf   # essai abandonné (nginx-sssl est compilé sans PCRE)
+# configuration de nginx-sssl : celle de Pretendo LAN (SNI noté) + blocs facultatifs dans lan.d/
+mkdir -p config/nginx-sssl.d
+install -m 644 "$REPO_DIR/config/nginx-sssl-lan.conf" config/nginx-sssl-lan.conf
+if [[ ${IDBE_SSSL:-0} -eq 1 ]]; then
+    install -m 644 "$REPO_DIR/config/nginx-sssl-idbe.conf" config/nginx-sssl.d/idbe.conf
+else
+    rm -f config/nginx-sssl.d/idbe.conf
+fi
 
 # ----------------------------------------------------------------------------- 7. compose.override.yml
 info "Génération de compose.override.yml…"
@@ -433,6 +520,8 @@ services:
       - "${WEB_PORT}:8888"
     volumes:
       - tagaya-cache:/var/cache/nginx/tagaya
+      # icônes des jeux (liste d'amis), gardées pour toujours (config/nginx-idbe.conf)
+      - ./icones:/var/lib/pretendo-icones
   mongodb:
     image: ${IMG_MONGO}
   mongo-express:
@@ -536,9 +625,11 @@ cat <<'EOF'
     ports:
       - "443:443"
     volumes:
-      - ./config/nginx-sssl.conf:/opt/nginx/conf/nginx.conf:ro
+      - ./config/nginx-sssl-lan.conf:/opt/nginx/conf/nginx.conf:ro
+      - ./config/nginx-sssl.d:/opt/nginx/conf/lan.d:ro
       - ./console-files/cert-chain.pem:/opt/nginx/ssl/ca.pem:ro
       - ./console-files/ssl-cert-private-key.pem:/opt/nginx/ssl/private.key:ro
+      - ./console-files/idbe:/opt/nginx/ssl/idbe:ro
 EOF
 fi
 for g in $GAMES; do
@@ -566,6 +657,13 @@ install -d -m 700 config/splatoon
 # sources déjà corrigées (installation existante).
 sed -i "s#delve/cmd/dlv@latest#delve/cmd/dlv@$DELVE_VERSION#" patches/*/*.patch
 sed -i "s#delve/cmd/dlv@latest#delve/cmd/dlv@$DELVE_VERSION#" repos/*/Dockerfile
+
+# bibliothèque nex-protocols-common-go de wiiu-chat-secure (sources/EXTRAS.tsv), donnée à sa construction.
+# Avant setup.sh, qui construit les images : sur une machine neuve, le dossier n'existe pas encore.
+if ! diff -rq "$REPO_DIR/sources/nex-protocols-common-go" config/nex-protocols-common-go >/dev/null 2>&1; then
+    rm -rf config/nex-protocols-common-go
+    cp -a "$REPO_DIR/sources/nex-protocols-common-go" config/
+fi
 
 # setup.sh n'a abouti que si le fichier témoin existe. Sans lui, un premier essai échoué laisserait
 # environment/*.local.env : la relance sauterait setup.sh, donc l'initialisation des bases.
@@ -639,6 +737,10 @@ install -m 644 "$REPO_DIR/config/nginx-portal.conf" config/nginx/zz-pretendo-lan
 install -m 644 "$REPO_DIR/config/nginx-nintendo-hosts.conf" config/nginx/zz-pretendo-lan-nintendo-hosts.conf
 # relais tagaya (vérification des versions par les jeux) avec cache hors ligne
 install -m 644 "$REPO_DIR/config/nginx-tagaya.conf" config/nginx/zz-pretendo-lan-tagaya.conf
+# icônes des jeux (liste d'amis) : servies depuis icones/, prises chez Nintendo la première fois
+install -m 644 "$REPO_DIR/config/nginx-idbe.conf" config/nginx/zz-pretendo-lan-idbe.conf
+mkdir -p icones/wup icones/ctr icones/.tmp
+chown -R 101:101 icones   # utilisateur nginx de l'image officielle (écrit les icônes reçues)
 # test NAT local des consoles
 install -m 644 "$REPO_DIR/config/nncs-local.py" config/nncs-local.py
 install -m 644 "$REPO_DIR/config/public-nat-local.Corefile" config/public-nat-local.Corefile
@@ -651,11 +753,6 @@ fi
 # DHCP des consoles : image, script de réservation et préfixes MAC Nintendo (réglages et réservations gardés)
 install -d -m 755 config/dhcp config/dhcp/reservations config/dhcp-image
 install -m 644 "$REPO_DIR/config/dhcp/Dockerfile" config/dhcp-image/Dockerfile
-# bibliothèque nex-protocols-common-go de wiiu-chat-secure (sources/EXTRAS.tsv), donnée à sa construction
-if ! diff -rq "$REPO_DIR/sources/nex-protocols-common-go" config/nex-protocols-common-go >/dev/null 2>&1; then
-    rm -rf config/nex-protocols-common-go
-    cp -a "$REPO_DIR/sources/nex-protocols-common-go" config/
-fi
 install -m 755 "$REPO_DIR/config/dhcp/reserve.sh" config/dhcp/reserve.sh
 install -m 644 "$REPO_DIR/config/dhcp/nintendo-oui.txt" config/dhcp/nintendo-oui.txt
 # profils compose actifs : test NAT local (seconde IP) et DHCP (activé dans config/dhcp/dhcp.json)
@@ -812,6 +909,10 @@ info "Construction des images modifiées et démarrage…"
 retry docker pull -q "$IMG_PYTHON" >/dev/null   # même sans test local : « pretendo nat-ip » doit marcher hors ligne
 # image du DHCP construite même s'il est désactivé : il doit pouvoir s'activer hors ligne
 retry docker compose --profile dhcp build dhcp
+# bases PostgreSQL des jeux ajoutés créées avant leur démarrage (sinon Pokkén et Resident Evil
+# s'arrêtent et redémarrent en boucle jusqu'à leur création par register-games)
+docker compose up -d postgres
+/usr/local/bin/pretendo game-databases
 retry docker compose up -d --build --remove-orphans
 docker compose exec -T nginx nginx -s reload </dev/null >/dev/null 2>&1 || true   # prend en compte le portail
 # pré-remplissage du cache tagaya (servi ensuite même hors ligne)

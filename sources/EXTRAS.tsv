@@ -2,3 +2,6 @@
 # nom	dépôt d'origine	commit	étiquette ou branche suivie	utilisée par
 nex-protocols-common-go	https://github.com/PretendoNetwork/nex-protocols-common-go.git	41f4655e6dc9c5b9f1ba96952c04c3a042e3f735	v1.0.22	repos/wiiu-chat-secure
 splatoon-rotation	https://github.com/Dr-Wily/splatoon-Rotationator-python.git	72a74626678e5f077530ffb0e25d8de31214d99f	v1.0.0	tools/pretendo-splatoon.py
+super-mario-3d-world	https://github.com/PretendoNetwork/super-mario-3d-world-secure.git	135b0084505b6029bc39614c205ea66c5a02b371	master	games/super-mario-3d-world
+pokken-tournament	https://github.com/PretendoNetwork/pokken-tournament.git	a07a965dfd77cc8c78d625c1b36605a0874559e5	master	games/pokken-tournament
+resident-evil-revelations	https://github.com/Protarium-Network/resident-evil-revelations-nex.git	40ab1b251dbb848375c124443d52edbd9d6f01b1	main	games/resident-evil-revelations

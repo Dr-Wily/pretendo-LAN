@@ -107,6 +107,7 @@ Ces causes ont toutes été observées sur une vraie installation et corrigées 
 | Vérification MX du mail à l'inscription (upstream) | Sans Internet, toutes les adresses sont refusées | `patches/account/lan-registration.patch` |
 | SSSL d'upstream : noms Nintendo non traduits | Hormis le compte et le test de connexion, tout répond 404 (liste des règles, Miiverse) | `config/nginx-nintendo-hosts.conf` : `*.nintendo.net` et `*.nintendowifi.net` traduits en `*.pretendo.cc` dans le nginx principal (nginx-sssl est compilé sans PCRE) |
 | DNS d'upstream : tagaya redirigé en local | Vérification des versions en 404, alors que le SSSL officiel la laisse aller chez Nintendo | `config/nginx-tagaya.conf` : relais vers Nintendo, avec cache persistant pour le fonctionnement hors ligne |
+| Icônes de la liste d'amis (`idbe-wup`/`idbe-ctr.cdn.nintendo.net`) signées par « Nintendo Class 2 CA - G3 » | « ? » à la place de l'icône d'un jeu non installé : la Wii U refuse le certificat SSSL (CA G3) | Même modification SSSL sur le CA Class 2 (`console-files/idbe/`), présentée selon le nom (`config/nginx-sssl-idbe.conf`) ; `config/nginx-idbe.conf` : icônes servies depuis `/opt/pretendo/icones/`, prises chez Nintendo une seule fois puis gardées |
 | Site servi uniquement sous `pretendo.network` | Inscription par le web inutilisable depuis un PC du réseau | Portail sur le port 8888 |
 
 ## Sécurité

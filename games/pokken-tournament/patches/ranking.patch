@@ -1,0 +1,249 @@
+diff --git a/database/init_postgres.go b/database/init_postgres.go
+index 76295f1..03603bb 100644
+--- a/database/init_postgres.go
++++ b/database/init_postgres.go
+@@ -16,5 +16,40 @@ func initPostgres() {
+ 		return
+ 	}
+ 
++	// Pretendo LAN : classements (nex/ranking)
++	_, err = globals.PostgresDB.Exec(`CREATE TABLE IF NOT EXISTS ranking_scores (
++		owner_pid bigint NOT NULL,
++		category bigint NOT NULL,
++		unique_id bigint NOT NULL,
++		score bigint NOT NULL,
++		order_by smallint NOT NULL,
++		groups bytea NOT NULL,
++		param bigint NOT NULL,
++		update_time timestamptz NOT NULL DEFAULT now(),
++		PRIMARY KEY (owner_pid, category, unique_id)
++	)`)
++	if err != nil {
++		globals.Logger.Critical(err.Error())
++		panic(err)
++	}
++
++	_, err = globals.PostgresDB.Exec(`CREATE INDEX IF NOT EXISTS ranking_scores_category ON ranking_scores (category, score)`)
++	if err != nil {
++		globals.Logger.Critical(err.Error())
++		panic(err)
++	}
++
++	_, err = globals.PostgresDB.Exec(`CREATE TABLE IF NOT EXISTS ranking_common_data (
++		owner_pid bigint NOT NULL,
++		unique_id bigint NOT NULL,
++		common_data bytea NOT NULL,
++		update_time timestamptz NOT NULL DEFAULT now(),
++		PRIMARY KEY (owner_pid, unique_id)
++	)`)
++	if err != nil {
++		globals.Logger.Critical(err.Error())
++		panic(err)
++	}
++
+ 	globals.Logger.Success("Postgres tables created")
+ }
+diff --git a/nex/ranking/get_rankings_and_count_by_category_and_ranking_order.go b/nex/ranking/get_rankings_and_count_by_category_and_ranking_order.go
+index b4e9a64..0688043 100644
+--- a/nex/ranking/get_rankings_and_count_by_category_and_ranking_order.go
++++ b/nex/ranking/get_rankings_and_count_by_category_and_ranking_order.go
+@@ -1,11 +1,103 @@
+ package ranking
+ 
+ import (
++	"database/sql"
++	"errors"
++	"fmt"
++	"time"
++
+ 	"github.com/PretendoNetwork/nex-go/v2/types"
+ 	ranking_types "github.com/PretendoNetwork/nex-protocols-go/v2/ranking/types"
++
++	"github.com/PretendoNetwork/pokken-tournament/globals"
+ )
+ 
+-// Stubbed
++// Pretendo LAN : classement d'une catégorie, lu dans ranking_scores.
++//   - sens du tri : OrderBy du dernier score envoyé dans la catégorie (1 = décroissant) ;
++//   - OrderCalculation 0 : rangs « 1224 » (ex æquo au même rang), 1 : rangs « 1234 » ;
++//   - GroupIndex 0 ou 1 : seuls les scores dont l'octet de groupe vaut GroupNum (255 = pas de filtre) ;
++//   - Offset et Length : tranche demandée (Length 0 = 10).
++//
++// Les données communes du joueur (UploadCommonData) sont jointes à chaque ligne.
+ func GetRankingsAndCountByCategoryAndRankingOrder(category types.UInt32, rankingOrderParam ranking_types.RankingOrderParam) (types.List[ranking_types.RankingRankData], uint32, error) {
+-	return types.List[ranking_types.RankingRankData]{}, 0, nil
++	list := types.List[ranking_types.RankingRankData]{}
++
++	var orderBy int16
++	err := globals.PostgresDB.QueryRow(`SELECT order_by FROM ranking_scores WHERE category = $1 ORDER BY update_time DESC LIMIT 1`,
++		int64(category)).Scan(&orderBy)
++	if errors.Is(err, sql.ErrNoRows) {
++		return list, 0, nil
++	}
++	if err != nil {
++		return list, 0, err
++	}
++
++	direction := "ASC"
++	if orderBy == 1 {
++		direction = "DESC"
++	}
++
++	where := "r.category = $1"
++	groupIndex := uint8(rankingOrderParam.GroupIndex)
++	if groupIndex < 2 {
++		where += fmt.Sprintf(" AND length(r.groups) > %d AND get_byte(r.groups, %d) = %d",
++			groupIndex, groupIndex, uint8(rankingOrderParam.GroupNum))
++	}
++
++	var total uint32
++	if err := globals.PostgresDB.QueryRow("SELECT count(*) FROM ranking_scores r WHERE "+where, int64(category)).Scan(&total); err != nil {
++		return list, 0, err
++	}
++
++	length := uint32(rankingOrderParam.Length)
++	if length == 0 {
++		length = 10
++	}
++
++	rankWindow := fmt.Sprintf("rank() OVER (ORDER BY r.score %s)", direction)
++	if uint8(rankingOrderParam.OrderCalculation) == 1 {
++		rankWindow = fmt.Sprintf("row_number() OVER (ORDER BY r.score %s, r.update_time)", direction)
++	}
++
++	query := fmt.Sprintf(`SELECT owner_pid, unique_id, score, groups, param, update_time, common_data, rk FROM (
++			SELECT r.owner_pid, r.unique_id, r.score, r.groups, r.param, r.update_time,
++				coalesce(c.common_data, ''::bytea) AS common_data,
++				%s AS rk,
++				row_number() OVER (ORDER BY r.score %s, r.update_time) AS rn
++			FROM ranking_scores r
++			LEFT JOIN ranking_common_data c ON c.owner_pid = r.owner_pid AND c.unique_id = r.unique_id
++			WHERE %s
++		) s ORDER BY rn OFFSET %d LIMIT %d`,
++		rankWindow, direction, where, uint32(rankingOrderParam.Offset), length)
++
++	rows, err := globals.PostgresDB.Query(query, int64(category))
++	if err != nil {
++		return list, 0, err
++	}
++	defer rows.Close()
++
++	for rows.Next() {
++		var pid, uniqueID, score, param, rank int64
++		var groups, commonData []byte
++		var updateTime time.Time
++
++		if err := rows.Scan(&pid, &uniqueID, &score, &groups, &param, &updateTime, &commonData, &rank); err != nil {
++			return list, 0, err
++		}
++
++		rankData := ranking_types.NewRankingRankData()
++		rankData.PrincipalID = types.PID(uint64(pid))
++		rankData.UniqueID = types.UInt64(uint64(uniqueID))
++		rankData.Order = types.UInt32(uint32(rank))
++		rankData.Category = category
++		rankData.Score = types.UInt32(uint32(score))
++		rankData.Groups = types.Buffer(groups)
++		rankData.Param = types.UInt64(uint64(param))
++		rankData.CommonData = types.Buffer(commonData)
++		rankData.UpdateTime.FromTimestamp(updateTime.UTC())
++
++		list = append(list, rankData)
++	}
++
++	return list, total, rows.Err()
+ }
+diff --git a/nex/ranking/insert_ranking_by_pid_and_ranking_score_data.go b/nex/ranking/insert_ranking_by_pid_and_ranking_score_data.go
+index 1a8ba86..dd055ce 100644
+--- a/nex/ranking/insert_ranking_by_pid_and_ranking_score_data.go
++++ b/nex/ranking/insert_ranking_by_pid_and_ranking_score_data.go
+@@ -1,17 +1,39 @@
+ package ranking
+ 
+ import (
+-	"fmt"
+-
+ 	"github.com/PretendoNetwork/nex-go/v2/types"
+ 	ranking_types "github.com/PretendoNetwork/nex-protocols-go/v2/ranking/types"
++
++	"github.com/PretendoNetwork/pokken-tournament/globals"
+ )
+ 
+-// Stubbed
++// Pretendo LAN : enregistre le score dans PostgreSQL (table ranking_scores), un par joueur,
++// catégorie et identifiant unique.
++//   - UpdateMode 0 : le score n'est remplacé que s'il est meilleur (OrderBy 0 = le plus petit
++//     gagne, 1 = le plus grand gagne) ;
++//   - UpdateMode 1 : le score est toujours remplacé.
++//
++// Les entiers non signés de 64 bits sont rangés tels quels dans des bigint (même suite de bits).
+ func InsertRankingByPIDAndRankingScoreData(pid types.PID, rankingScoreData ranking_types.RankingScoreData, uniqueID types.UInt64) error {
+-	fmt.Println(rankingScoreData)
+-	fmt.Println(uniqueID)
+-	fmt.Println(pid)
++	globals.Logger.Infof("Ranking::UploadScore pid=%d category=%d score=%d order_by=%d update_mode=%d unique_id=%d groups=%x",
++		uint64(pid), uint32(rankingScoreData.Category), uint32(rankingScoreData.Score),
++		uint8(rankingScoreData.OrderBy), uint8(rankingScoreData.UpdateMode), uint64(uniqueID), []byte(rankingScoreData.Groups))
++
++	groups := []byte(rankingScoreData.Groups)
++	if groups == nil {
++		groups = []byte{}
++	}
++
++	_, err := globals.PostgresDB.Exec(`INSERT INTO ranking_scores (owner_pid, category, unique_id, score, order_by, groups, param, update_time)
++		VALUES ($1, $2, $3, $4, $5, $6, $7, now())
++		ON CONFLICT (owner_pid, category, unique_id) DO UPDATE SET
++			score = EXCLUDED.score, order_by = EXCLUDED.order_by, groups = EXCLUDED.groups,
++			param = EXCLUDED.param, update_time = now()
++		WHERE $8::smallint = 1
++			OR (EXCLUDED.order_by = 1 AND EXCLUDED.score > ranking_scores.score)
++			OR (EXCLUDED.order_by <> 1 AND EXCLUDED.score < ranking_scores.score)`,
++		int64(pid), int64(rankingScoreData.Category), int64(uniqueID), int64(rankingScoreData.Score),
++		int16(rankingScoreData.OrderBy), groups, int64(rankingScoreData.Param), int16(rankingScoreData.UpdateMode))
+ 
+-	return nil
++	return err
+ }
+diff --git a/nex/ranking/upload_common_data.go b/nex/ranking/upload_common_data.go
+new file mode 100644
+index 0000000..1825752
+--- /dev/null
++++ b/nex/ranking/upload_common_data.go
+@@ -0,0 +1,25 @@
++package ranking
++
++import (
++	"github.com/PretendoNetwork/nex-go/v2/types"
++
++	"github.com/PretendoNetwork/pokken-tournament/globals"
++)
++
++// Pretendo LAN : données communes du joueur (profil affiché avec ses scores dans le classement),
++// une par joueur et identifiant unique, table ranking_common_data.
++func UploadCommonData(pid types.PID, uniqueID types.UInt64, commonData types.Buffer) error {
++	globals.Logger.Infof("Ranking::UploadCommonData pid=%d unique_id=%d %d octets", uint64(pid), uint64(uniqueID), len(commonData))
++
++	data := []byte(commonData)
++	if data == nil {
++		data = []byte{}
++	}
++
++	_, err := globals.PostgresDB.Exec(`INSERT INTO ranking_common_data (owner_pid, unique_id, common_data, update_time)
++		VALUES ($1, $2, $3, now())
++		ON CONFLICT (owner_pid, unique_id) DO UPDATE SET common_data = EXCLUDED.common_data, update_time = now()`,
++		int64(pid), int64(uniqueID), data)
++
++	return err
++}
+diff --git a/nex/register_common_secure_server_protocols.go b/nex/register_common_secure_server_protocols.go
+index cf86983..6f751e0 100755
+--- a/nex/register_common_secure_server_protocols.go
++++ b/nex/register_common_secure_server_protocols.go
+@@ -61,6 +61,7 @@ func registerCommonSecureServerProtocols() {
+ 	commonRankingProtocol := common_ranking.NewCommonProtocol(rankingProtocol)
+ 	commonRankingProtocol.GetRankingsAndCountByCategoryAndRankingOrderParam = local_ranking.GetRankingsAndCountByCategoryAndRankingOrder
+ 	commonRankingProtocol.InsertRankingByPIDAndRankingScoreData = local_ranking.InsertRankingByPIDAndRankingScoreData
++	commonRankingProtocol.UploadCommonData = local_ranking.UploadCommonData // Pretendo LAN
+ 
+ 	datastoreProtocol := datastore.NewProtocol()
+ 	globals.SecureEndpoint.RegisterServiceProtocol(datastoreProtocol)

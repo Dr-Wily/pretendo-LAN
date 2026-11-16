@@ -41,13 +41,18 @@ NEX_LABELS = {
 }
 
 
+MODULE_COMMUNITIES = {}  # numéro de communauté -> module games/ qui la crée à chaque démarrage
+
+
 def load_game_labels():
     games_dir = os.path.join(INSTALL_DIR, "games")
     for name in sorted(os.listdir(games_dir)) if os.path.isdir(games_dir) else []:
         try:
             with open(os.path.join(games_dir, name, "game.conf")) as fh:
-                conf = dict(re.findall(r'^(GAME_\w+)="?([^"\n]*)"?', fh.read(), re.M))
+                conf = dict(re.findall(r'^(GAME_\w+)="?([^"\n#]*?)"?\s*(?:#.*)?$', fh.read(), re.M))
             NEX_LABELS[conf["GAME_SERVICE"]] = conf.get("GAME_NAME", name)
+            if conf.get("GAME_COMMUNITY_ID", "").isdigit():
+                MODULE_COMMUNITIES[conf["GAME_COMMUNITY_ID"]] = name
         except (OSError, KeyError):
             pass
 
@@ -665,8 +670,14 @@ def community_presets():
         for t in f[5].split():
             region, _, hexid = t.rpartition(":")
             titles.append({"region": region, "hex": hexid.upper()})
-        rows.append({"id": f[0], "platform": f[1], "auto": f[2] == "oui", "validated": f[3] == "validé",
-                     "name": f[4], "titles": titles, "note": f[6] if len(f) > 6 else ""})
+        servers = []  # serveurs annexes : « nex:<ID> » ou « service:<client_id>=<nom> »
+        # le nom d'un service peut contenir des espaces (« RESIDENT EVIL.NET ») : il va jusqu'au serveur suivant
+        for m in re.finditer(r"(nex|service):([^\s=]+)(?:=(.*?))?(?=\s+(?:nex|service):|\s*$)", f[7] if len(f) > 7 else ""):
+            kind, sid, label = m.group(1), m.group(2), (m.group(3) or "").strip()
+            servers.append({"kind": kind, "id": sid.upper() if kind == "nex" else sid.lower(), "label": label})
+        rows.append({"id": f[0], "platform": f[1], "auto": f[2] == "oui" or f[0] in MODULE_COMMUNITIES,
+                     "validated": f[3] == "validé", "state": f[3], "name": f[4], "titles": titles,
+                     "note": f[6] if len(f) > 6 else "", "servers": servers, "module": MODULE_COMMUNITIES.get(f[0], "")})
     return rows
 
 
@@ -683,12 +694,25 @@ def communities():
         "m.posts.aggregate([{$group: {_id: '$community_id', n: {$sum: 1}}}]).forEach(g => posts[g._id] = g.n);"
         "const c = m.communities.find({}, {_id: 0, community_id: 1, name: 1, description: 1, type: 1, parent: 1,"
         " platform_id: 1, title_id: 1, owner: 1, created_at: 1}).toArray();"
-        "print(EJSON.stringify({communities: c, posts: posts}, {relaxed: true}));"
+        "const s = db.getSiblingDB('pretendo_account').servers.find({access_mode: 'prod'},"
+        " {_id: 0, game_server_id: 1, client_id: 1, service_name: 1}).toArray();"
+        "print(EJSON.stringify({communities: c, posts: posts, servers: s}, {relaxed: true}));"
     )
     data = mongo_eval(js)
     if "error" in data:
         return data
     presets = community_presets()
+    known = {}  # serveurs enregistrés dans le serveur de comptes : ID de jeu ou client_id -> nom
+    for s in data.get("servers", []):
+        if s.get("game_server_id"):
+            known["nex:" + str(s["game_server_id"]).upper()] = s.get("service_name", "")
+        if s.get("client_id"):
+            known["service:" + str(s["client_id"]).lower()] = s.get("service_name", "")
+    for p in presets:
+        for srv in p["servers"]:
+            key = srv["kind"] + ":" + srv["id"]
+            srv["installed"] = key in known
+            srv["name"] = known.get(key, "")
     by_id = {p["id"]: p for p in presets}
     region_of = {t["hex"]: t["region"] for p in presets for t in p["titles"]}
     posts = data.get("posts", {})
@@ -1005,6 +1029,10 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
  <p class="mut">Un jeu qui publie sur Miiverse (messages, dessins, place centrale de Splatoon, tournois de Mario Kart 8…) a besoin de la communauté de son titre :
  sans elle, le serveur Miiverse répond 404 au jeu. Une communauté n'apporte pas le jeu en ligne : il faut aussi un serveur de jeu, ce qu'ont Mario Kart 8 et Splatoon.
  Les messages des joueurs ne se modifient pas ici.</p></div>
+ <div class="card"><b>Publication Miiverse avec serveur annexe</b>
+ <p class="mut">Jeux dont la publication sur Miiverse demande d'abord un autre serveur : leur serveur de jeu (module <code>games/</code>,
+ voir <code>GAMES=</code> dans <code>versions.env</code>), voire un service web de l'éditeur. Sans lui, le jeu grise ses fonctions Miiverse ou affiche une erreur.</p>
+ <table><thead><tr><th>Jeu</th><th>Serveur requis</th><th>Sur ce serveur</th></tr></thead><tbody id="comsrv"></tbody></table></div>
  <div class="card"><b>Jeux connus</b>
  <table><thead><tr><th>Jeu</th><th>Console</th><th>Title ID</th><th>État</th><th>Communauté</th></tr></thead><tbody id="comp"></tbody></table>
  <p class="mut">Title ID relevés dans les listes publiques de WiiUBrew (Wii U) et de 3dsdb (3DS). Un jeu absent de la liste se crée avec « Autre jeu » ci-dessous.</p></div>
@@ -1019,7 +1047,7 @@ select,input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-ra
  <span class="mut" id="commsg"></span></div><p class="mut" id="cnote"></p></div>
  <div class="card"><b>Communautés du serveur</b>
  <table><thead><tr><th>Nº</th><th>Nom</th><th>Description</th><th>Console</th><th>Title ID</th><th>Messages</th><th>Sous-communautés</th><th></th></tr></thead><tbody id="comm"></tbody></table>
- <p class="mut">Seules les communautés sans message ni sous-communauté, hors Mario Kart 8 et Splatoon (recréées à chaque démarrage), peuvent être supprimées.</p></div>
+ <p class="mut">Seules les communautés sans message ni sous-communauté, hors celles recréées à chaque démarrage (Mario Kart 8, Splatoon et les jeux qui ont leur module de serveur), peuvent être supprimées.</p></div>
  <div class="card"><b>Sous-communautés créées par les jeux</b> <span class="mut">(lecture seule : elles contiennent des données de jeu)</span>
  <table><thead><tr><th>Nº</th><th>Nom</th><th>Communauté parente</th><th>Messages</th><th>Créée le (UTC)</th></tr></thead><tbody id="comsub"></tbody></table></div>
 </section>
@@ -1228,9 +1256,14 @@ const jpost=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/jso
 async function loadCom(){const d=await api('/api/communities');
  if(d.error){$('#comm').innerHTML=`<tr><td class="bad">${esc(d.error)}</td></tr>`;return;}
  window._com=d;
+ const sl=s=>s.kind==='nex'?`serveur de jeu ${esc(s.id)}`:`service ${esc(s.label||s.id.slice(0,8)+'…')}`;
+ $('#comsrv').innerHTML=d.presets.filter(p=>p.servers.length).map(p=>`<tr><td><b>${esc(p.name)}</b>${p.module?` <span class="mut">(module ${esc(p.module)})</span>`:''}</td>
+  <td>${p.servers.map(sl).join('<br>')}</td>
+  <td>${p.servers.map(s=>s.installed?`<span class="ok">présent</span>${s.name?' <span class="mut">('+esc(s.name)+')</span>':''}`
+   :`<span class="bad">absent</span>`).join('<br>')}</td></tr>`).join('')||'<tr><td class="mut">aucun</td></tr>';
  $('#comp').innerHTML=d.presets.map(p=>`<tr><td><b>${esc(p.name)}</b>${p.note?`<br><span class="mut" style="white-space:normal">${esc(p.note)}</span>`:''}</td>
   <td>${esc(PLAT[p.platform]||p.platform)}</td><td>${tlist(p.titles)}</td>
-  <td>${p.validated?'<span class="ok">validé sur console</span>':'<span class="mut">non essayé</span>'}</td>
+  <td>${p.validated?'<span class="ok">validé sur console</span>':p.servers.length?'<span class="bad">serveur annexe requis</span>':'<span class="mut">non essayé</span>'}</td>
   <td>${p.created?`<span class="ok">créée (nº ${esc(p.id)})</span>`:p.taken_by?`<span class="bad">Title ID déjà dans ${esc(p.taken_by)}</span>`
   :`<button class="act" onclick="comPick('${esc(p.id)}')">Créer…</button>`}</td></tr>`).join('');
  $('#comm').innerHTML=d.main.map((c,i)=>`<tr><td>${esc(c.id)}</td><td><b>${esc(c.name)}</b></td><td class="mut" style="white-space:normal">${esc(c.description)}</td>

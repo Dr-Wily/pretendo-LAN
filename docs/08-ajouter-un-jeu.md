@@ -38,6 +38,7 @@ GAME_BRANCH=master
 GAME_COMMIT=abcdef1                   # version figée (testée)
 GAME_MIRRORS=""                       # facultatif : copies des sous-modules, « dépôt d'origine=copie » séparés par des espaces
 GAME_SKIP_SUBMODULES=""               # facultatif : sous-modules inutiles, non téléchargés (chemins depuis la racine du jeu)
+GAME_SOURCE=""                        # facultatif : code copié dans le dépôt (ex. sources/super-smash-bros-wiiu), au lieu de GAME_REPO
 GAME_SERVER_ID=10144F00               # identifiant NEX du jeu
 GAME_TITLE_IDS="00050000101C9400 00050000101C9500 00050000101C9300"   # JPN USA EUR
 GAME_DEVICE=1                         # 1 = Wii U, 2 = 3DS
@@ -45,6 +46,8 @@ GAME_AUTH_PORT=6014                   # deux ports UDP libres, à la suite des a
 GAME_SECURE_PORT=6015
 GAME_SECRETS="KERBEROS_PASSWORD"      # secrets générés une fois et conservés
 GAME_POSTGRES_DB="smash_wiiu"         # base créée automatiquement ; vide si inutile
+GAME_SERVICE_CLIENT_ID=""             # facultatif : client_id d'un service dont le jeu demande un jeton au serveur de comptes
+GAME_SERVICE_CLIENT_NAME=""           # facultatif : nom de ce service (ex. « RESIDENT EVIL.NET »)
 ```
 
 > Les valeurs de cet exemple sont **illustratives** : `GAME_SERVER_ID`, les title IDs et la clé d'accès se trouvent dans le README ou le code du dépôt du jeu, et sur le wiki Nintendo de Pretendo.
@@ -105,7 +108,7 @@ services:
    - clone le jeu à `GAME_COMMIT` (sous-modules depuis leurs copies de `GAME_MIRRORS`, sauf ceux de `GAME_SKIP_SUBMODULES`) ;
    - génère `runtime.env` et les secrets ;
    - ajoute le service, le construit et le démarre ;
-   - crée la base PostgreSQL et enregistre le jeu dans la base de comptes.
+   - crée la base PostgreSQL et enregistre le jeu dans la base de comptes (et le service de `GAME_SERVICE_CLIENT_ID`, s'il y en a un).
 4. Vérifie avec `sudo pretendo games`, `sudo pretendo doctor` (3 entrées serveur pour le jeu) et `sudo pretendo logs <service>`.
 5. Teste sur console : l'onglet *Connexions* doit montrer la console sur le nom du jeu.
 

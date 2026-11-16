@@ -1,5 +1,38 @@
 # Journal des modifications
 
+## 1.11.0 (16/11/2026)
+
+**Serveurs de jeux ajoutés**
+- **Super Mario 3D World** ([PretendoNetwork/super-mario-3d-world-secure](https://github.com/PretendoNetwork/super-mario-3d-world-secure) @ `135b0084`), ports UDP 6014-6015 : connexion au mode en ligne seulement (la version actuelle ne gère plus les fantômes Mii). Sans lui, le jeu grise ses fonctions Miiverse. Validé sur console le 15/11/2026 : connexion, fonctions Miiverse débloquées en avançant dans le jeu, texte et dessin publiés.
+- **Pokkén Tournament** ([PretendoNetwork/pokken-tournament](https://github.com/PretendoNetwork/pokken-tournament) @ `a07a965d`), ports UDP 6018-6019 : matchmaking, classements, stockage en ligne (bucket MinIO `pokken-tournament`). Correctifs : MinIO du LAN en HTTP ; **classements** : le serveur d'origine ne les gardait pas (scores oubliés, classement toujours vide, données du joueur refusées, d'où l'erreur à l'inscription au classement). Ils sont désormais enregistrés dans PostgreSQL (`ranking.patch` : meilleur score par joueur et catégorie, tri et rangs, filtre de groupe, données du joueur jointes). Validé sur console le 15/11/2026 : combat en ligne entre deux consoles, inscription au classement après plusieurs matchs (scores enregistrés et classés). Aucune fonction Miiverse vue dans le jeu.
+- **Resident Evil: Revelations** ([Protarium-Network/resident-evil-revelations-nex](https://github.com/Protarium-Network/resident-evil-revelations-nex) @ `40ab1b25`), ports UDP 6016-6017 : connexion et matchmaking du mode Raid. Correctif : mots de passe NEX et jetons du serveur de comptes Pretendo, au lieu de son mode local ou de son secret propre. Depuis sa mise à jour, le jeu demande aussi un jeton du service RESIDENT EVIL.NET pour le mode réseau et Miiverse (sinon erreur 102-2482) : le module déclare ce service au serveur de comptes (nouvelle option `GAME_SERVICE_CLIENT_ID` des modules). Le jeu cherche aussi à joindre `rerevfr.capcom.co.jp`, serveur de Capcom qui ne répond plus (essai du 15/11/2026, depuis Internet) ; il fonctionne sans réponse. Validé sur console le 15/11/2026 : mode réseau, messages des créatures et funèbres, messages des autres comptes affichés sur l'écran du jeu.
+- Leur code est copié dans `sources/` (licence AGPL-3.0), figé sur un commit (`sources/EXTRAS.tsv`) : nouvelle option `GAME_SOURCE` des modules `games/`, qui prend le code du dépôt au lieu de le télécharger ; correctifs du module dans `games/<jeu>/patches/`. Chaque module crée la communauté Miiverse de son jeu.
+
+**Icônes des jeux dans la liste d'amis**
+- Pour un jeu qui n'est pas installé sur la console, la liste d'amis affichait souvent un « ? » à la place de son icône. La console la télécharge sur `idbe-wup.cdn.nintendo.net` (Wii U) ou `idbe-ctr.cdn.nintendo.net` (3DS), dont le certificat est signé par « Nintendo Class 2 CA - G3 », un autre CA que celui du SSSL : la Wii U refusait le certificat SSSL (alerte « unknown ca »).
+- L'installateur récupère ce CA dans la chaîne de `wup-o2fgs.cdn.nintendo.net` (retenu seulement avec la bonne empreinte SHA-256), lui applique la même modification SSSL et `nginx-sssl` le présente aux seules connexions qui demandent ces noms (SNI). Il est facultatif : sans Internet à l'installation, un avertissement est affiché et le reste fonctionne.
+- Les icônes sont gardées **pour toujours** dans `/opt/pretendo/icones/` : une icône présente est servie sans interroger Nintendo ; sinon elle est demandée à Nintendo une seule fois, puis enregistrée (seulement les réponses complètes : une erreur n'enregistre ni n'écrase rien). Hors ligne, et après la fermeture du serveur de Nintendo, les icônes déjà vues restent affichées. Elles font partie des sauvegardes (`pretendo backup`) et restent sur le serveur (contenu Nintendo, pas dans le dépôt).
+- Les icônes que Nintendo ne fournit pas sont notées dans `/opt/pretendo/icones/manquantes.log` (date, Wii U ou 3DS, adresse demandée, code, console), pour un futur onglet de l'interface web. La console demande d'abord `<jeu>-<version>.idbe` puis `<jeu>.idbe` : un jeu n'est sans icône que si les deux échouent.
+- `nginx-sssl` utilise désormais `config/nginx-sssl-lan.conf` (celle d'upstream, plus le nom demandé noté dans le journal, `sni=…`) et les blocs de `config/nginx-sssl.d/`.
+- Validé sur console le 16/11/2026, deux Wii U européennes en SSSL : icônes de Rayman Legends, Just Dance 2014, Wii Karaoke U, Wooden Sen'SeY, Lovefilm et de jeux Virtual Console, affichées chez l'ami qui n'a pas le jeu. Nintendo n'a pas toutes les icônes : il répond 403 pour Fast Racing Neo et pour la chaîne Homebrew, qui gardent leur « ? ». 3DS non essayée (elle n'utilise pas le SSSL).
+
+**Communautés Miiverse**
+- Nouvelle catégorie « serveur annexe » : jeux dont la publication Miiverse demande d'abord un autre serveur (Super Mario 3D World, Pokkén Tournament, Resident Evil: Revelations depuis sa mise à jour). Onglet *Communautés* : serveur requis et présence sur ce serveur. Dernier champ de `miiverse/communautes.txt`. Avec leur serveur, Super Mario 3D World et Resident Evil: Revelations passent à « validé » ; Pokkén Tournament reste « serveur annexe » (publication Miiverse pas encore essayée).
+- Le nom d'un service peut contenir des espaces (« RESIDENT EVIL.NET ») : l'onglet l'affichait coupé au premier mot.
+
+**Documentation**
+- README : nouvelle section *Jeux testés* (jeux essayés sur console, ce qui a été essayé, résultat).
+- Installation : `sudo git clone` (sans `sudo`, un utilisateur ordinaire ne peut pas écrire dans `/opt`).
+
+**Installation**
+- Le certificat « Nintendo CA - G3 » du SSSL n'était plus trouvé sur une machine neuve : `account.nintendo.net` a cessé de l'envoyer dans sa chaîne (constaté le 16/11/2026), et l'installation s'arrêtait (« CA Nintendo G3 introuvable »). Les versions déjà publiées ont le même défaut. L'installateur essaie désormais plusieurs serveurs de Nintendo (`mii-secure.account`, `discovery.olv`, `nppl.app`, `ecs.c.shop`) et ne retient le certificat qu'avec la bonne empreinte.
+- Sur une machine neuve, la construction des images échouait (« failed to get build context nex-protocols-common-go ») : la bibliothèque de Wii U Chat n'était copiée qu'après la construction. Défaut présent depuis la 1.8.0, masqué sur les machines déjà installées. Elle est maintenant copiée avant.
+- Au premier démarrage, Pokkén Tournament et Resident Evil: Revelations s'arrêtaient et redémarraient en boucle (7 fois, environ 15 s) tant que leur base PostgreSQL n'existait pas, et `pretendo doctor` les signalait. Les bases des jeux sont désormais créées avant leur démarrage (nouvelle commande `pretendo game-databases`, aussi appelée par `register-games`).
+
+**Essai d'ensemble**
+- Installateur complet relancé le 16/11/2026 sur la VM de test (mise à jour d'une 1.10.0) : code 0, tous les services en marche ; ensuite, sur console, Resident Evil: Revelations, Pokkén Tournament et les icônes fonctionnent.
+- Première installation sur une machine Debian 13 neuve le 16/11/2026, selon la documentation (`install-all.sh --yes`) : elle a révélé les trois défauts d'installation corrigés ci-dessus. Ensuite : code 0, `pretendo doctor` sans plantage et toutes les sondes OK, certificats SSSL et des icônes créés, icône servie. Après un redémarrage de la machine, tout repart. Pas d'essai sur console avec cette machine.
+
 ## 1.10.0 (13/11/2026)
 
 **Communautés Miiverse (expérimental)**

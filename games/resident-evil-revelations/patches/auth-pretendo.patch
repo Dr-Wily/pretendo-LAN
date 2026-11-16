@@ -1,0 +1,175 @@
+diff --git a/globals/account_grpc.go b/globals/account_grpc.go
+new file mode 100644
+index 0000000..4d0d05b
+--- /dev/null
++++ b/globals/account_grpc.go
+@@ -0,0 +1,43 @@
++package globals
++
++// Pretendo LAN : mots de passe NEX demandés au serveur de comptes Pretendo (gRPC v1, comme les serveurs de jeu
++// de Pretendo) au lieu du dérivé HMAC. Actif quand PN_REREV_ACCOUNT_GRPC_HOST est réglé (mode partagé).
++
++import (
++	"context"
++	"fmt"
++
++	pb "github.com/PretendoNetwork/grpc-go/account"
++	"github.com/PretendoNetwork/nex-go/v2"
++	"github.com/PretendoNetwork/nex-go/v2/types"
++	"google.golang.org/grpc"
++	"google.golang.org/grpc/credentials/insecure"
++	"google.golang.org/grpc/metadata"
++)
++
++var GRPCAccountClient pb.AccountClient
++var GRPCAccountMetadata metadata.MD
++
++func ConnectAccountGRPC(host, port, apiKey string) error {
++	conn, err := grpc.Dial(fmt.Sprintf("%s:%s", host, port), grpc.WithTransportCredentials(insecure.NewCredentials()))
++	if err != nil {
++		return err
++	}
++
++	GRPCAccountClient = pb.NewAccountClient(conn)
++	GRPCAccountMetadata = metadata.Pairs("X-API-Key", apiKey)
++
++	return nil
++}
++
++func passwordFromPIDAccountGRPC(pid types.PID) (string, uint32) {
++	ctx := metadata.NewOutgoingContext(context.Background(), GRPCAccountMetadata)
++
++	response, err := GRPCAccountClient.GetNEXPassword(ctx, &pb.GetNEXPasswordRequest{Pid: uint32(pid)})
++	if err != nil {
++		Logger.Error(err.Error())
++		return "", nex.ResultCodes.RendezVous.InvalidUsername
++	}
++
++	return response.Password, 0
++}
+diff --git a/globals/password_from_pid.go b/globals/password_from_pid.go
+index 13ac94c..d2a5400 100644
+--- a/globals/password_from_pid.go
++++ b/globals/password_from_pid.go
+@@ -24,6 +24,10 @@ func PasswordFromPID(pid types.PID) (string, uint32) {
+ 		return passwordFromPIDLocal(pid)
+ 	}
+ 
++	if GRPCAccountClient != nil { // Pretendo LAN : serveur de comptes Pretendo
++		return passwordFromPIDAccountGRPC(pid)
++	}
++
+ 	if len(NEXPasswordSecret) < 32 {
+ 		return "", nex.ResultCodes.RendezVous.InvalidUsername
+ 	}
+diff --git a/go.mod b/go.mod
+index f1afdd1..946faf3 100644
+--- a/go.mod
++++ b/go.mod
+@@ -3,18 +3,21 @@ module github.com/Protarium-Network/re-revelations-nex
+ go 1.25.0
+ 
+ require (
++	github.com/PretendoNetwork/grpc-go v1.0.2
+ 	github.com/PretendoNetwork/nex-go/v2 v2.1.3
+ 	github.com/PretendoNetwork/nex-protocols-common-go/v2 v2.4.0
+ 	github.com/PretendoNetwork/nex-protocols-go/v2 v2.2.1
+ 	github.com/PretendoNetwork/plogger-go v1.1.0
+ 	github.com/joho/godotenv v1.5.1
+ 	github.com/lib/pq v1.10.9
++	google.golang.org/grpc v1.58.3
+ )
+ 
+ require (
+ 	github.com/PretendoNetwork/pq-extended v1.0.0 // indirect
+ 	github.com/dolthub/maphash v0.1.0 // indirect
+ 	github.com/fatih/color v1.18.0 // indirect
++	github.com/golang/protobuf v1.5.3 // indirect
+ 	github.com/jwalton/go-supportscolor v1.2.0 // indirect
+ 	github.com/klauspost/compress v1.18.0 // indirect
+ 	github.com/lxzan/gws v1.8.8 // indirect
+@@ -24,6 +27,10 @@ require (
+ 	github.com/superwhiskers/crunch/v3 v3.5.7 // indirect
+ 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
+ 	golang.org/x/mod v0.24.0 // indirect
++	golang.org/x/net v0.39.0 // indirect
+ 	golang.org/x/sys v0.32.0 // indirect
+ 	golang.org/x/term v0.31.0 // indirect
++	golang.org/x/text v0.24.0 // indirect
++	google.golang.org/genproto/googleapis/rpc v0.0.0-20230711160842-782d3b101e98 // indirect
++	google.golang.org/protobuf v1.31.0 // indirect
+ )
+diff --git a/go.sum b/go.sum
+index 7068ea1..1e038f5 100644
+--- a/go.sum
++++ b/go.sum
+@@ -1,3 +1,5 @@
++github.com/PretendoNetwork/grpc-go v1.0.2 h1:9TvKmX7dCOANyoHEra1MMYqS1N/RGav66TRG4SHInvo=
++github.com/PretendoNetwork/grpc-go v1.0.2/go.mod h1:XZjEsij9lL7HJBNkH6JPbBIkUSq/1rjflvjGdv+DAj0=
+ github.com/PretendoNetwork/nex-go/v2 v2.1.3 h1:hdi8PbJIWbpr3WOc1fGJ5ssF76kTxFJ3Wnz46WJYvVs=
+ github.com/PretendoNetwork/nex-go/v2 v2.1.3/go.mod h1:3LyJzsv3AataJW8D0binp15Q8ZH22MWTYly1VNtXi64=
+ github.com/PretendoNetwork/nex-protocols-common-go/v2 v2.4.0 h1:EhXj1EDbNgdg40BPx/7n1HHsAy/DayGIWthu81UNyvI=
+@@ -14,6 +16,10 @@ github.com/dolthub/maphash v0.1.0 h1:bsQ7JsF4FkkWyrP3oCnFJgrCUAFbFf3kOl4L/QxPDyQ
+ github.com/dolthub/maphash v0.1.0/go.mod h1:gkg4Ch4CdCDu5h6PMriVLawB7koZ+5ijb9puGMV50a4=
+ github.com/fatih/color v1.18.0 h1:S8gINlzdQ840/4pfAwic/ZE0djQEH3wM94VfqLTZcOM=
+ github.com/fatih/color v1.18.0/go.mod h1:4FelSpRwEGDpQ12mAdzqdOukCy4u8WUtOY6lkT/6HfU=
++github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=
++github.com/golang/protobuf v1.5.3 h1:KhyjKVUg7Usr/dYsdSqoFveMYd5ko72D+zANwlG1mmg=
++github.com/golang/protobuf v1.5.3/go.mod h1:XVQd3VNwM+JqD3oG2Ue2ip4fOMUkwXdXDdiuN0vRsmY=
++github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
+ github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
+ github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
+ github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
+@@ -42,6 +48,8 @@ golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 h1:R84qjqJb5nVJMxqWYb3np9L5Z
+ golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0/go.mod h1:S9Xr4PYopiDyqSyp5NjCrhFrqg6A5zA2E/iPHPhqnS8=
+ golang.org/x/mod v0.24.0 h1:ZfthKaKaT4NrhGVZHO1/WDTwGES4De8KtWO0SIbNJMU=
+ golang.org/x/mod v0.24.0/go.mod h1:IXM97Txy2VM4PJ3gI61r1YEk/gAj6zAHN3AdZt6S9Ww=
++golang.org/x/net v0.39.0 h1:ZCu7HMWDxpXpaiKdhzIfaltL9Lp31x/3fCP11bc6/fY=
++golang.org/x/net v0.39.0/go.mod h1:X7NRbYVEA+ewNkCNyJ513WmMdQ3BineSwVtN2zD/d+E=
+ golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210220050731-9a76102bfb43/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+@@ -50,5 +58,16 @@ golang.org/x/sys v0.32.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+ golang.org/x/term v0.0.0-20210220032956-6a3ed077a48d/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
+ golang.org/x/term v0.31.0 h1:erwDkOK1Msy6offm1mOgvspSkslFnIGsFnxOKoufg3o=
+ golang.org/x/term v0.31.0/go.mod h1:R4BeIy7D95HzImkxGkTW1UQTtP54tio2RyHz7PwK0aw=
++golang.org/x/text v0.24.0 h1:dd5Bzh4yt5KYA8f9CJHCP4FB4D51c2c6JvN37xJJkJ0=
++golang.org/x/text v0.24.0/go.mod h1:L8rBsPeo2pSS+xqN0d5u2ikmjtmoJbDBT1b7nHvFCdU=
++golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
++google.golang.org/genproto/googleapis/rpc v0.0.0-20230711160842-782d3b101e98 h1:bVf09lpb+OJbByTj913DRJioFFAjf/ZGxEz7MajTp2U=
++google.golang.org/genproto/googleapis/rpc v0.0.0-20230711160842-782d3b101e98/go.mod h1:TUfxEVdsvPg18p6AslUXFoLdpED4oBnGwyqk3dV1XzM=
++google.golang.org/grpc v1.58.3 h1:BjnpXut1btbtgN/6sp+brB2Kbm2LjNXnidYujAVbSoQ=
++google.golang.org/grpc v1.58.3/go.mod h1:tgX3ZQDlNJGU96V6yHh1T/JeoBQ2TXdr43YbYSsCJk0=
++google.golang.org/protobuf v1.26.0-rc.1/go.mod h1:jlhhOSvTdKEhbULTjvd4ARK9grFBp09yW+WbY/TyQbw=
++google.golang.org/protobuf v1.26.0/go.mod h1:9q0QmTI4eRPtz6boOQmLYwt+qCgq0jsYwAQnmE0givc=
++google.golang.org/protobuf v1.31.0 h1:g0LDEJHgrBl9N9r17Ru3sqWhkIx2NB67okBHPwC7hs8=
++google.golang.org/protobuf v1.31.0/go.mod h1:HV8QOd/L58Z+nl8r43ehVNZIU/HEI6OcFqwMG9pJV4I=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+diff --git a/init.go b/init.go
+index 4e3823b..577c187 100644
+--- a/init.go
++++ b/init.go
+@@ -55,10 +55,18 @@ func init() {
+ 			globals.Logger.Critical("PN_REREV_NEX_TOKEN_AES_KEY must be a 64-character hexadecimal AES-256 key")
+ 			os.Exit(1)
+ 		}
+-		globals.NEXPasswordSecret, err = hex.DecodeString(requiredEnv("PN_REREV_NEX_PASSWORD_SECRET"))
+-		if err != nil || len(globals.NEXPasswordSecret) < 32 {
+-			globals.Logger.Critical("PN_REREV_NEX_PASSWORD_SECRET must be at least 32 bytes encoded as hexadecimal")
+-			os.Exit(1)
++		if accountHost := strings.TrimSpace(os.Getenv("PN_REREV_ACCOUNT_GRPC_HOST")); accountHost != "" {
++			// Pretendo LAN : mots de passe NEX du serveur de comptes Pretendo (gRPC)
++			if err := globals.ConnectAccountGRPC(accountHost, requiredEnv("PN_REREV_ACCOUNT_GRPC_PORT"), os.Getenv("PN_REREV_ACCOUNT_GRPC_API_KEY")); err != nil {
++				globals.Logger.Criticalf("Failed to connect to account gRPC server: %v", err)
++				os.Exit(1)
++			}
++		} else {
++			globals.NEXPasswordSecret, err = hex.DecodeString(requiredEnv("PN_REREV_NEX_PASSWORD_SECRET"))
++			if err != nil || len(globals.NEXPasswordSecret) < 32 {
++				globals.Logger.Critical("PN_REREV_NEX_PASSWORD_SECRET must be at least 32 bytes encoded as hexadecimal")
++				os.Exit(1)
++			}
+ 		}
+ 	}
+ 

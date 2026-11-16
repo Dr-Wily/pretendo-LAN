@@ -125,18 +125,30 @@ boot_settle() {
     [[ ${#apps[@]} -eq 0 ]] || dc restart "${apps[@]}" >/dev/null 2>&1
 }
 
+# Bases PostgreSQL propres aux jeux ajoutés (GAME_POSTGRES_DB), créées si absentes. À faire AVANT le
+# premier démarrage de ces jeux : sans leur base, certains serveurs (Pokkén, Resident Evil) s'arrêtent
+# aussitôt et Docker les relance en boucle jusqu'à sa création.
+game_databases() {
+    local g db i
+    for i in $(seq 1 30); do pg_ready && break; sleep 2; done
+    for g in $(games); do
+        db=$(. "games/$g/game.conf"; echo "${GAME_POSTGRES_DB:-}")
+        [[ -n $db ]] || continue
+        dcx postgres sh -c "psql -U \"\$POSTGRES_USER\" -d postgres -Atc \"select 1 from pg_database where datname='$db'\" | grep -q 1 \
+            || psql -q -U \"\$POSTGRES_USER\" -d postgres -c 'create database \"$db\"'" >/dev/null && echo "  base PostgreSQL '$db' : OK"
+    done
+    return 0
+}
+
 register_games() {
     # Les scripts d'upstream ne connaissent pas ces jeux : on (ré)enregistre leur
     # entrée dans pretendo_account.servers (idempotent), puis on lance leurs crochets.
     local ip; ip=$(server_ip)
+    game_databases
     wait_mongo || return 1
     for g in $(games); do
         (
             . "games/$g/game.conf"
-            if [[ -n ${GAME_POSTGRES_DB:-} ]]; then   # base PostgreSQL propre au jeu
-                dcx postgres sh -c "psql -U \"\$POSTGRES_USER\" -d postgres -Atc \"select 1 from pg_database where datname='$GAME_POSTGRES_DB'\" | grep -q 1 \
-                    || psql -q -U \"\$POSTGRES_USER\" -d postgres -c 'create database \"$GAME_POSTGRES_DB\"'" >/dev/null && echo "  base PostgreSQL '$GAME_POSTGRES_DB' : OK"
-            fi
             tids=$(printf "'%s'," $GAME_TITLE_IDS)
             dcx mongodb mongosh --quiet pretendo_account --eval "
                 for (const mode of ['prod', 'test', 'dev']) {
@@ -150,6 +162,18 @@ register_games() {
                 }
                 print('$GAME_NAME : ' + db.servers.countDocuments({ game_server_id: '$GAME_SERVER_ID' }) + ' entrées dans la base de comptes');
             "
+            if [[ -n ${GAME_SERVICE_CLIENT_ID:-} ]]; then   # service dont le jeu demande un jeton (ex. : RESIDENT EVIL.NET)
+                dcx mongodb mongosh --quiet pretendo_account --eval "
+                    for (const mode of ['prod', 'test', 'dev']) {
+                        db.servers.updateOne(
+                            { client_id: '$GAME_SERVICE_CLIENT_ID', access_mode: mode },
+                            { \$set: {
+                                service_name: '${GAME_SERVICE_CLIENT_NAME:-$GAME_NAME}', service_type: 'service', title_ids: [${tids%,}],
+                                maintenance_mode: false, device: $GAME_DEVICE, aes_key: '0'.repeat(64) } },
+                            { upsert: true });
+                    }
+                " >/dev/null && echo "  service '${GAME_SERVICE_CLIENT_NAME:-$GAME_NAME}' : OK"
+            fi
             if [[ -n ${GAME_COMMUNITY_ID:-} ]]; then   # communauté Miiverse du jeu (ex. : tournois de MK8)
                 dec=""; for t in $GAME_TITLE_IDS; do dec+="'$(printf %d "0x$t")',"; done
                 dcx mongodb mongosh --quiet pretendo_miiverse --eval "
@@ -596,9 +620,10 @@ boss_ftp() { # récupère SD:/boss_keys.bin sur la Wii U (ftpiiu lancé)
 
 # ---------------------------------------------------------------- sauvegarde / restauration
 CONFIG_FILES=(.env secrets.txt environment compose.override.yml admin-password.txt certs games/*/secrets.env games/*/runtime.env config/accords config/dhcp
-              config/splatoon config/boss-cdn)
+              config/splatoon config/boss-cdn icones)
 SECRET_FILES=(console-files/cert-chain.pem console-files/ssl-cert-private-key.pem console-files/CACERT_NINTENDO_CA_G3.der
-              console-files/boss_keys.bin console-files/aes_keys.txt)
+              console-files/boss_keys.bin console-files/aes_keys.txt
+              console-files/CACERT_NINTENDO_CLASS2_CA_G3.der console-files/idbe)
 
 backup() {
     local label=${1:-} dest
@@ -815,6 +840,8 @@ case "${1:-help}" in
             printf '%-16s %-24s UDP %s/%s  %s\n' "$g" "$(game_get "$g" GAME_NAME)" "$(game_get "$g" GAME_AUTH_PORT)" \
                 "$(game_get "$g" GAME_SECURE_PORT)" "$(git -C "games/$g/src" rev-parse --short=8 HEAD)"
         done ;;
+    game-databases)
+        game_databases ;;
     register-games|register-mk8)
         register_games ;;
     mii-refresh)

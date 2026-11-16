@@ -1,0 +1,13 @@
+diff --git a/init.go b/init.go
+index 708e305..ee3348d 100755
+--- a/init.go
++++ b/init.go
+@@ -181,7 +181,7 @@ func init() {
+ 
+ 	minIOClient, err := minio.New(s3Endpoint, &minio.Options{
+ 		Creds:  staticCredentials,
+-		Secure: true,
++		Secure: os.Getenv("PN_POKKENTOURNAMENT_S3_SECURE") != "false", // Pretendo LAN : MinIO du LAN en HTTP
+ 	})
+ 	if err != nil {
+ 		panic(err)

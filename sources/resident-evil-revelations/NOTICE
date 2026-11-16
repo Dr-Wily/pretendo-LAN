@@ -1,0 +1,15 @@
+This server is built on the Pretendo Network NEX stack:
+
+  - github.com/PretendoNetwork/nex-go
+  - github.com/PretendoNetwork/nex-protocols-go
+  - github.com/PretendoNetwork/nex-protocols-common-go
+  - github.com/PretendoNetwork/plogger-go
+
+all licensed under the GNU Affero General Public License v3.0.
+nex-protocols-common-go is used unmodified (no vendored fork); it provisions
+its own matchmaking / tracking PostgreSQL schema (see docs/matchmaking-schema.md).
+
+The Resident Evil: Revelations NEX configuration (access key 59d539a9, NEX
+3.2.1, game server IDs 1012b400 / 1012cf00 / 10113100) comes from the game's
+own executable and the public wiiubrew title database - see RECON.md. No
+proprietary Nintendo or Capcom code or assets are included.

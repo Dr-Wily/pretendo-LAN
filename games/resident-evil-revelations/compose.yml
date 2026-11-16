@@ -1,0 +1,18 @@
+# Fragment fusionné dans compose.override.yml par install.sh.
+# Chemins relatifs au dossier d'installation (/opt/pretendo par défaut).
+# Variables remplacées : ${GAME_AUTH_PORT} ${GAME_SECURE_PORT}
+services:
+  resident-evil-revelations:
+    build: ./games/resident-evil-revelations
+    restart: always
+    depends_on:
+      - account
+      - postgres
+    dns: 172.20.0.200
+    networks:
+      - internal
+    ports:
+      - "${GAME_AUTH_PORT}:${GAME_AUTH_PORT}/udp"
+      - "${GAME_SECURE_PORT}:${GAME_SECURE_PORT}/udp"
+    env_file:
+      - ./games/resident-evil-revelations/runtime.env

@@ -45,7 +45,7 @@ Deux installateurs, au choix :
 
 ```bash
 sudo apt install -y git
-git clone https://github.com/Dr-Wily/pretendo-LAN.git /opt/pretendo-lan
+sudo git clone https://github.com/Dr-Wily/pretendo-LAN.git /opt/pretendo-lan
 cd /opt/pretendo-lan
 sudo ./install-all.sh            # ou : sudo ./install-server-only.sh
 ```

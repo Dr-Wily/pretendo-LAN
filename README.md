@@ -27,7 +27,7 @@ Le projet s'appuie sur [MatthewL246/pretendo-docker](https://github.com/MatthewL
 
 ```bash
 sudo apt install -y git
-git clone https://github.com/Dr-Wily/pretendo-LAN.git /opt/pretendo-lan
+sudo git clone https://github.com/Dr-Wily/pretendo-LAN.git /opt/pretendo-lan
 cd /opt/pretendo-lan
 sudo ./install-all.sh
 ```
@@ -72,12 +72,44 @@ Il reste ensuite à :
 | Mario Kart 8 en ligne | ✅ testé | ✅ attendu | – |
 | Tournois de Mario Kart 8 | ✅ attendu | ✅ testé (création, recherche, classement) | – |
 | Splatoon : mode en ligne, rotation des stages (SpotPass), place centrale | ✅ attendu | ✅ testé (Wii U européennes : rotation annoncée, salon entre deux consoles, joueurs sur la place après un message Miiverse) | – |
-| Super Mario Maker, Minecraft, Pikmin 3, Wii U Chat | ✅ fournis par upstream | ✅ attendu | – |
+| Super Mario Maker, Minecraft, Pikmin 3, Wii U Chat | ✅ fournis par upstream (Wii U Chat testé, voir [Jeux testés](#jeux-testés)) | ✅ attendu | – |
+| Super Mario 3D World, Pokkén Tournament, Resident Evil: Revelations (serveurs ajoutés en 1.11.0) | non essayé | ✅ testé pour 3D World (Miiverse) et Resident Evil (mode réseau, Miiverse) ; Pokkén : combat en ligne et classement | – |
 | Miiverse (Juxtaposition) | ✅ | ❌ (navigateur intégré) | partiel |
-| Communautés Miiverse des jeux (onglet *Communautés*, expérimental) | ✅ attendu | ✅ testé pour MK8, Splatoon, Star Fox Zero, Mario Party 10, Rayman Legends et Resident Evil: Revelations ; les autres jeux de la liste sont à essayer | non essayé |
+| Communautés Miiverse des jeux (onglet *Communautés*, expérimental) | ✅ attendu | ✅ testé pour MK8, Splatoon, Star Fox Zero, Mario Party 10, Rayman Legends, Resident Evil: Revelations et Super Mario 3D World ; les autres jeux de la liste sont à essayer | non essayé |
 | Paramètres de l'identifiant sur la console (pays, région…) | ✅ attendu | ❌ erreur 120-1819 (navigateur intégré) : onglet *Comptes* de l'admin | – |
 | SpotPass | Splatoon (rotation, Splatfest) ; autres jeux : contenu à fournir | idem | contenu à fournir |
 | eShop | ❌ (non fourni par Pretendo) | ❌ | ❌ |
+
+## Jeux testés
+
+Essais faits sur console avec ce projet (Wii U européennes, la plupart en SSSL). « Non essayé » ne veut pas dire que le jeu ne marche pas : seulement que personne ne l'a encore vérifié ici.
+
+**Jeux avec leur serveur en ligne**
+
+| Jeu | Serveur | Ce qui a été essayé | Résultat |
+|---|---|---|---|
+| Mario Kart 8 | Newtendo (intégré) | Courses en ligne entre consoles, y compris sans Internet ; tournois (création, recherche, classement) ; communauté Miiverse | ✅ |
+| Splatoon | Pretendo | Mode en ligne, salon entre deux consoles, rotation des stages annoncée, place centrale peuplée par les messages Miiverse | ✅ |
+| Super Mario 3D World | Pretendo (ajouté en 1.11.0) | Connexion ; fonctions Miiverse débloquées en avançant dans le jeu, texte et dessin publiés | ✅ (les fantômes Mii ne sont plus gérés par le serveur) |
+| Pokkén Tournament | Pretendo (ajouté en 1.11.0) | Combat en ligne entre deux consoles, inscription au classement après plusieurs matchs | ✅ (aucune fonction Miiverse vue dans le jeu) |
+| Resident Evil: Revelations | Protarium (ajouté en 1.11.0) | Mode réseau, messages des créatures et funèbres, messages des autres comptes affichés | ✅ |
+| Wii U Chat | Pretendo | Appels vidéo entre deux consoles, raccrocher et annuler des deux côtés | ✅ |
+| Super Mario Maker, Minecraft: Wii U Edition, Pikmin 3 | Pretendo | – | non essayé |
+
+**Jeux sans serveur en ligne : publication Miiverse depuis le jeu**
+
+La communauté du jeu se crée dans l'onglet *Communautés* de l'interface web ; sans elle, l'envoi échoue (erreur 115-2004).
+
+| Jeu | Ce qui a été essayé | Résultat |
+|---|---|---|
+| Star Fox Zero | Menu Miiverse du mode entraînement | ✅ |
+| Mario Party 10 | Studio photo : photo et texte | ✅ |
+| Rayman Legends | Menu du bouton + | ✅ |
+| Nintendo Land | Aucune demande Miiverse du jeu pendant l'essai | ❔ |
+
+**Icônes de la liste d'amis** : vérifiées avec Rayman Legends, Just Dance 2014, Wii Karaoke U, Wooden Sen'SeY, Lovefilm et des jeux Virtual Console. Nintendo ne fournit pas celle de Fast Racing Neo ni celle de la chaîne Homebrew : elles restent des « ? ».
+
+**3DS** : aucun jeu essayé pour l'instant.
 
 ## Crédits
 
